@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Login</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body class="login-page">
+    <form method="post" class="login-box">
+        <h2>Strahlungsübung Login</h2>
+
+        <select name="username" required>
+    <option value="">-- Benutzer wählen --</option>
+    {% for u in users %}
+        <option value="{{ u.username }}">{{ u.username }}</option>
+    {% endfor %}
+</select>
+
+        <input type="password" name="password" placeholder="Passwort" required>
+
+        {% if error %}
+        <p class="error">{{ error }}</p>
+        {% endif %}
+
+        <button type="submit">Login</button>
+    </form>
+</body>
+</html>

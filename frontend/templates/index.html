@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <title>Radsim – Dashboard</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+
+<body>
+
+<header class="navbar">
+    <h1 class="logo">Radsim</h1>
+
+    <!-- Aktive Übung Badge -->
+    <div class="aktive-uebung">
+        {% if aktive_uebung %}
+            <span class="uebung-badge aktiv">● {{ aktive_uebung.name }}</span>
+        {% else %}
+            <span class="uebung-badge inaktiv">Keine aktive Übung</span>
+        {% endif %}
+    </div>
+
+    <nav class="nav-links">
+        <div class="nav-item"><a href="#">Dashboard</a></div>
+        <div class="nav-item"><a href="#">Übungen</a></div>
+        <div class="nav-item"><a href="#">Live-Messung</a></div>
+    </nav>
+
+    <div class="nav-auth">
+        {% if current_user.is_authenticated %}
+            <span class="user-name">Hallo {{ current_user.username }}</span>
+            <a href="{{ url_for('auth.logout') }}" class="btn btn-logout">Logout</a>
+        {% else %}
+            <button onclick="openLogin()" class="btn btn-login">Login</button>
+        {% endif %}
+    </div>
+</header>
+
+<!-- Dashboard Titel -->
+<div class="page-header">
+    <h2>Dashboard</h2>
+    <p class="page-subtitle">Übersicht aller Geräte</p>
+</div>
+
+<!-- Messgeräte -->
+<div class="section-header">
+    <h3>Messgeräte</h3>
+</div>
+<section id="devices-list" class="devices-grid">
+    {% for d in devices %}
+        {% if d.typ == "messgeraet" %}
+        <div class="device-card"
+             data-id="{{ d.id }}"
+             data-typ="{{ d.typ }}"
+             data-name="{{ d.name }}"
+             data-mcu="{{ d.mcu_adresse or '' }}"
+             data-status="{{ d.status or '' }}"
+             data-akku="{{ d.akku or '' }}"
+             data-gesamtdosis="{{ d.gesamtdosis }}">
+            <div class="device-icon">
+                <img src="/static/img/geiger_icon.png" alt="{{ d.name }}">
+            </div>
+            <div class="device-name">{{ d.name }}</div>
+            <div class="device-doses">
+                <div class="current-dose">— mSv/h</div>
+                <div class="total-dose">{{ "%.2f"|format(d.gesamtdosis) }} mSv</div>
+            </div>
+        </div>
+        {% endif %}
+    {% endfor %}
+</section>
+
+<!-- Strahlungsquellen -->
+<div class="section-header">
+    <h3>Strahlungsquellen</h3>
+</div>
+<section id="sources-list" class="devices-grid">
+    {% for d in devices %}
+        {% if d.typ == "quelle" %}
+        <div class="device-card"
+             data-id="{{ d.id }}"
+             data-typ="{{ d.typ }}"
+             data-name="{{ d.name }}"
+             data-mcu="{{ d.mcu_adresse or '' }}"
+             data-status="{{ d.status or '' }}"
+             data-akku="{{ d.akku or '' }}"
+             data-alpha="{{ d.staerke_alpha }}"
+             data-beta="{{ d.staerke_beta }}"
+             data-gamma="{{ d.staerke_gamma }}">
+            <div class="device-icon">
+                <img src="/static/img/quelle_icon.png" alt="{{ d.name }}">
+            </div>
+            <div class="device-name">{{ d.name }}</div>
+            <div class="device-source-info">
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">α Alpha</span>
+                    <span class="staerke-alpha staerke-wert {% if d.staerke_alpha > 0 %}aktiv{% endif %}">
+                        {{ "%.2f"|format(d.staerke_alpha) }} mSv/h
+                    </span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">β Beta</span>
+                    <span class="staerke-beta staerke-wert {% if d.staerke_beta > 0 %}aktiv{% endif %}">
+                        {{ "%.2f"|format(d.staerke_beta) }} mSv/h
+                    </span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">γ Gamma</span>
+                    <span class="staerke-gamma staerke-wert {% if d.staerke_gamma > 0 %}aktiv{% endif %}">
+                        {{ "%.2f"|format(d.staerke_gamma) }} mSv/h
+                    </span>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+    {% endfor %}
+</section>
+
+<main></main>
+
+<!-- LOGIN MODAL -->
+<div id="loginModal" class="modal">
+    <div class="modal-content">
+        <span class="close" onclick="closeLogin()">&times;</span>
+        <h2>Login</h2>
+        <form id="loginForm">
+            <select name="username" required>
+                <option value="">-- Benutzer wählen --</option>
+                {% for u in users %}
+                    <option value="{{ u.username }}">{{ u.username }}</option>
+                {% endfor %}
+            </select>
+            <input type="password" name="password" placeholder="Passwort" required>
+            <button type="submit" class="btn btn-login">Einloggen</button>
+            <p id="loginError" class="error"></p>
+        </form>
+    </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div id="detailModal" class="modal">
+    <div class="modal-content detail-modal-content">
+        <span class="close" onclick="closeDetail()">&times;</span>
+
+        <!-- Header -->
+        <div class="detail-header">
+            <img id="detailIcon" src="" alt="" class="detail-icon">
+            <div>
+                <h2 id="detailTitel"></h2>
+                <span id="detailTypBadge" class="device-type-badge"></span>
+            </div>
+        </div>
+
+        <div class="detail-body">
+
+            <!-- Linke Spalte: Infos -->
+            <div class="detail-col">
+                <h3>Geräteinformationen</h3>
+
+                <div class="detail-feld">
+                    <label>Name</label>
+                    {% if current_user.is_authenticated %}
+                        <input type="text" id="detailName" class="detail-input">
+                    {% else %}
+                        <span id="detailName" class="detail-wert"></span>
+                    {% endif %}
+                </div>
+
+                <div class="detail-feld">
+                    <label>Typ</label>
+                    <span id="detailTyp" class="detail-wert"></span>
+                </div>
+
+                <div class="detail-feld">
+                    <label>MCU-Adresse</label>
+                    {% if current_user.is_authenticated %}
+                        <input type="text" id="detailMcu" class="detail-input" placeholder="z.B. 192.168.1.10">
+                    {% else %}
+                        <span id="detailMcu" class="detail-wert"></span>
+                    {% endif %}
+                </div>
+
+                <div class="detail-feld">
+                    <label>Status</label>
+                    {% if current_user.is_authenticated %}
+                        <select id="detailStatus" class="detail-input">
+                            <option value="aktiv">Aktiv</option>
+                            <option value="inaktiv">Inaktiv</option>
+                            <option value="fehler">Fehler</option>
+                        </select>
+                    {% else %}
+                        <span id="detailStatus" class="detail-wert"></span>
+                    {% endif %}
+                </div>
+
+                <div class="detail-feld">
+                    <label>Akku</label>
+                    {% if current_user.is_authenticated %}
+                        <input type="number" id="detailAkku" class="detail-input" min="0" max="100" step="0.1" placeholder="%">
+                    {% else %}
+                        <span id="detailAkku" class="detail-wert"></span>
+                    {% endif %}
+                </div>
+
+                {% if current_user.is_authenticated %}
+                <button class="btn btn-login" style="width:100%; margin-top:16px;" onclick="saveDetails()">
+                    Änderungen speichern
+                </button>
+                {% endif %}
+            </div>
+
+            <!-- Rechte Spalte: Messwerte / Strahlungswerte -->
+            <div class="detail-col">
+
+                <!-- Messgerät -->
+                <div id="detailMessgeraet" style="display:none;">
+                    <h3>Messwerte</h3>
+                    <div class="detail-feld">
+                        <label>Aktuelle Dosis</label>
+                        <span id="detailCurrentDose" class="detail-wert detail-dose">— mSv/h</span>
+                    </div>
+                    <div class="detail-feld">
+                        <label>Gesamtdosis</label>
+                        <span id="detailTotalDose" class="detail-wert detail-dose"></span>
+                        <input type="number" id="detailTotalDoseInput" class="detail-input"
+                               step="0.01" min="0" style="display:none; margin-top:6px;">
+                    </div>
+                    {% if current_user.is_authenticated %}
+                    <div style="display:flex; gap:8px; margin-top:16px;">
+                        <button id="btnBearbeitenDosis" class="btn btn-login" style="flex:1"
+                                onclick="toggleDosisEdit()">✏ Bearbeiten</button>
+                        <button class="btn btn-logout" style="flex:1"
+                                onclick="resetDosis()">↺ Reset</button>
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Quelle -->
+                <div id="detailQuelle" style="display:none;">
+                    <h3>Strahlungsintensität</h3>
+                    <div class="detail-feld">
+                        <label>α Alpha (mSv/h)</label>
+                        {% if current_user.is_authenticated %}
+                            <input type="number" id="detailAlpha" class="detail-input" min="0" step="0.01" placeholder="0.00">
+                        {% else %}
+                            <span id="detailAlpha" class="detail-wert"></span>
+                        {% endif %}
+                    </div>
+                    <div class="detail-feld">
+                        <label>β Beta (mSv/h)</label>
+                        {% if current_user.is_authenticated %}
+                            <input type="number" id="detailBeta" class="detail-input" min="0" step="0.01" placeholder="0.00">
+                        {% else %}
+                            <span id="detailBeta" class="detail-wert"></span>
+                        {% endif %}
+                    </div>
+                    <div class="detail-feld">
+                        <label>γ Gamma (mSv/h)</label>
+                        {% if current_user.is_authenticated %}
+                            <input type="number" id="detailGamma" class="detail-input" min="0" step="0.01" placeholder="0.00">
+                        {% else %}
+                            <span id="detailGamma" class="detail-wert"></span>
+                        {% endif %}
+                    </div>
+                    {% if current_user.is_authenticated %}
+                    <button class="btn btn-login" style="width:100%; margin-top:16px;" onclick="saveStrahlung()">
+                        Strahlungswerte speichern
+                    </button>
+                    {% endif %}
+                </div>
+
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="/static/js/main.js"></script>
+
+</body>
+</html>
