@@ -338,6 +338,69 @@ main {
 }
 
 /* =========================================================
+   ADD DEVICE KARTE
+========================================================= */
+
+.add-device-card {
+    border: 2px dashed #b0bec5;
+    background-color: #f0f4f7;
+    justify-content: center;
+    align-items: center;
+    min-height: 120px;
+    transition: border-color 0.2s, background-color 0.2s, transform 0.2s, box-shadow 0.2s;
+}
+
+.add-device-card:hover {
+    border-color: #3498db;
+    background-color: #e8f4fd;
+    transform: translateY(-3px);
+    box-shadow: 0 4px 12px rgba(52, 152, 219, 0.2);
+}
+
+.add-device-icon {
+    font-size: 36px;
+    font-weight: 300;
+    color: #90a4ae;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.add-device-card:hover .add-device-icon {
+    color: #3498db;
+}
+
+.add-device-label {
+    font-weight: 500;
+    font-size: 13px;
+    color: #78909c;
+    transition: color 0.2s;
+}
+
+.add-device-card:hover .add-device-label {
+    color: #3498db;
+}
+
+/* =========================================================
+   ADD DEVICE MODAL
+========================================================= */
+
+.add-device-modal-content {
+    width: 700px;
+    max-width: 90vw;
+    margin: 4% auto;
+    max-height: 90vh;
+    overflow-y: auto;
+    text-align: left;
+    padding: 30px;
+}
+
+.add-device-modal-content h2 {
+    margin-top: 0;
+    margin-bottom: 0;
+    text-align: left;
+}
+
+/* =========================================================
    MESSGERÄT – Dosiswerte
 ========================================================= */
 

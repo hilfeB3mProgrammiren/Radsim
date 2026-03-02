@@ -74,6 +74,9 @@ socket.on("new_device", device => {
     const container   = document.getElementById(containerId);
     if (!container) return;
 
+    // Neue Karte vor der Add-Karte einfügen
+    const addCard = container.querySelector(".add-device-card");
+
     const card = document.createElement("div");
     card.classList.add("device-card");
     card.dataset.id     = device.id;
@@ -123,7 +126,12 @@ socket.on("new_device", device => {
             </div>`;
     }
 
-    container.appendChild(card);
+    // Vor der Add-Karte einfügen, falls vorhanden
+    if (addCard) {
+        container.insertBefore(card, addCard);
+    } else {
+        container.appendChild(card);
+    }
     bindCardClick(card);
 });
 
@@ -334,6 +342,84 @@ function resetDosis() {
 }
 
 /* =========================================================
+   GERÄT HINZUFÜGEN MODAL
+========================================================= */
+
+function openAddDevice(typ) {
+    // Felder zurücksetzen
+    document.getElementById("addName").value        = "";
+    document.getElementById("addMcu").value         = "";
+    document.getElementById("addStatus").value      = "aktiv";
+    document.getElementById("addAkku").value        = "";
+    document.getElementById("addDeviceError").innerText = "";
+
+    document.getElementById("addDeviceTyp").value = typ;
+
+    if (typ === "messgeraet") {
+        document.getElementById("addDeviceTitle").innerText     = "Messgerät hinzufügen";
+        document.getElementById("addMessgeraetFelder").style.display = "block";
+        document.getElementById("addQuelleFelder").style.display     = "none";
+        document.getElementById("addGesamtdosis").value = "";
+    } else {
+        document.getElementById("addDeviceTitle").innerText     = "Strahlungsquelle hinzufügen";
+        document.getElementById("addMessgeraetFelder").style.display = "none";
+        document.getElementById("addQuelleFelder").style.display     = "block";
+        document.getElementById("addAlpha").value = "";
+        document.getElementById("addBeta").value  = "";
+        document.getElementById("addGamma").value = "";
+    }
+
+    document.getElementById("addDeviceModal").style.display = "block";
+}
+
+function closeAddDevice() {
+    document.getElementById("addDeviceModal").style.display = "none";
+}
+
+function submitAddDevice() {
+    const name = document.getElementById("addName").value.trim();
+    const typ  = document.getElementById("addDeviceTyp").value;
+
+    if (!name) {
+        document.getElementById("addDeviceError").innerText = "Bitte einen Namen eingeben.";
+        return;
+    }
+
+    const payload = {
+        name:        name,
+        typ:         typ,
+        mcu_adresse: document.getElementById("addMcu").value.trim() || null,
+        status:      document.getElementById("addStatus").value,
+        akku:        parseFloat(document.getElementById("addAkku").value) || 100.0,
+    };
+
+    if (typ === "messgeraet") {
+        payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
+    } else {
+        payload.staerke_alpha = parseFloat(document.getElementById("addAlpha").value) || 0.0;
+        payload.staerke_beta  = parseFloat(document.getElementById("addBeta").value)  || 0.0;
+        payload.staerke_gamma = parseFloat(document.getElementById("addGamma").value) || 0.0;
+    }
+
+    fetch("/add_device", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
+    }).then(r => {
+        if (r.ok) {
+            closeAddDevice();
+            // Das socket-Event "new_device" übernimmt das Rendern der neuen Karte
+        } else {
+            r.text().then(t => {
+                document.getElementById("addDeviceError").innerText = "Fehler: " + t;
+            });
+        }
+    }).catch(() => {
+        document.getElementById("addDeviceError").innerText = "Verbindungsfehler.";
+    });
+}
+
+/* =========================================================
    LOGIN
 ========================================================= */
 
@@ -393,7 +479,7 @@ function updateChart(value) {
 
 document.addEventListener("DOMContentLoaded", function () {
 
-    document.querySelectorAll(".device-card").forEach(card => {
+    document.querySelectorAll(".device-card:not(.add-device-card)").forEach(card => {
         const currentEl = card.querySelector(".current-dose");
         const totalEl   = card.querySelector(".total-dose");
         if (currentEl) setDoseColor(currentEl, parseFloat(currentEl.innerText));
@@ -402,14 +488,16 @@ document.addEventListener("DOMContentLoaded", function () {
     });
 
     document.addEventListener("click", e => {
-        const loginModal  = document.getElementById("loginModal");
-        const detailModal = document.getElementById("detailModal");
-        if (loginModal  && e.target === loginModal)  closeLogin();
-        if (detailModal && e.target === detailModal) closeDetail();
+        const loginModal     = document.getElementById("loginModal");
+        const detailModal    = document.getElementById("detailModal");
+        const addDeviceModal = document.getElementById("addDeviceModal");
+        if (loginModal     && e.target === loginModal)     closeLogin();
+        if (detailModal    && e.target === detailModal)    closeDetail();
+        if (addDeviceModal && e.target === addDeviceModal) closeAddDevice();
     });
 
     document.addEventListener("keydown", e => {
-        if (e.key === "Escape") { closeLogin(); closeDetail(); }
+        if (e.key === "Escape") { closeLogin(); closeDetail(); closeAddDevice(); }
     });
 
     const loginForm = document.getElementById("loginForm");
