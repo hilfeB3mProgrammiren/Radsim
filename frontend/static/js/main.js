@@ -34,6 +34,10 @@ function updateDeviceCard(data) {
         card.dataset.gesamtdosis = v;
     }
 
+    if (data.mac_adresse !== undefined) {
+        card.dataset.mcu = data.mac_adresse || "";
+    }
+
     const felder = { alpha: ".staerke-alpha", beta: ".staerke-beta", gamma: ".staerke-gamma" };
     for (const [typ, selector] of Object.entries(felder)) {
         const key = "staerke_" + typ;
@@ -82,7 +86,7 @@ socket.on("new_device", device => {
     card.dataset.id     = device.id;
     card.dataset.typ    = device.typ;
     card.dataset.name   = device.name;
-    card.dataset.mcu    = device.mcu_adresse || "";
+    card.dataset.mcu    = device.mac_adresse || "";
     card.dataset.status = device.status || "";
     card.dataset.akku   = device.akku || "";
 
@@ -133,6 +137,11 @@ socket.on("new_device", device => {
         container.appendChild(card);
     }
     bindCardClick(card);
+
+    // Falls aus Übungs-Detail heraus hinzugefügt → Detail neu laden
+    if (typeof aktiveUebungDetailId !== "undefined" && aktiveUebungDetailId) {
+        openUebungDetail(aktiveUebungDetailId);
+    }
 });
 
 /* =========================================================
@@ -269,11 +278,25 @@ function saveDetails() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
             name:        getName?.value,
-            mcu_adresse: getMcu?.value,
+            mac_adresse: getMcu?.value,
             status:      getStatus?.value,
             akku:        parseFloat(getAkku?.value) || null
         })
-    }).then(r => { if (r.ok) closeDetail(); });
+    }).then(r => {
+        if (r.ok) {
+            // Karte lokal sofort aktualisieren
+            const card = document.querySelector(`.device-card[data-id='${activeDeviceId}']`);
+            if (card) {
+                card.dataset.mcu    = getMcu?.value || "";
+                card.dataset.name   = getName?.value || "";
+                card.dataset.status = getStatus?.value || "";
+                card.dataset.akku   = getAkku?.value || "";
+                const nameEl = card.querySelector(".device-name");
+                if (nameEl) nameEl.innerText = getName?.value || "";
+            }
+            closeDetail();
+        }
+    });
 }
 
 // Strahlungswerte speichern (nur Quellen)
@@ -342,26 +365,72 @@ function resetDosis() {
 }
 
 /* =========================================================
+   GERÄT LÖSCHEN / AUS ÜBUNG ENTFERNEN
+========================================================= */
+
+function removeFromUebung() {
+    if (!activeDeviceId) return;
+    if (!confirm("Gerät aus der aktiven Übung entfernen?\nDas Gerät bleibt in der Datenbank erhalten.")) return;
+
+    fetch(`/device/${activeDeviceId}/remove_from_uebung`, { method: "POST" })
+        .then(r => {
+            if (r.ok) {
+                const card = document.querySelector(`.device-card[data-id='${activeDeviceId}']`);
+                if (card) card.dataset.uebung = "";
+                closeDetail();
+            } else {
+                alert("Fehler beim Entfernen aus der Übung.");
+            }
+        });
+}
+
+function deleteDevice() {
+    if (!activeDeviceId) return;
+    const name = document.getElementById("detailTitel")?.innerText || "dieses Gerät";
+    if (!confirm(`„${name}" dauerhaft aus der Datenbank löschen?\nDiese Aktion kann nicht rückgängig gemacht werden.`)) return;
+
+    fetch(`/device/${activeDeviceId}`, { method: "DELETE" })
+        .then(r => {
+            if (r.ok) {
+                const card = document.querySelector(`.device-card[data-id='${activeDeviceId}']`);
+                if (card) card.remove();
+                closeDetail();
+            } else {
+                alert("Fehler beim Löschen des Geräts.");
+            }
+        });
+}
+
+socket.on("device_deleted", data => {
+    const card = document.querySelector(`.device-card[data-id='${data.id}']`);
+    if (card) card.remove();
+});
+
+/* =========================================================
    GERÄT HINZUFÜGEN MODAL
 ========================================================= */
 
+// Zwischenspeicher für DB-Geräte
+let dbGeraeteCache = [];
+
 function openAddDevice(typ) {
     // Felder zurücksetzen
-    document.getElementById("addName").value        = "";
-    document.getElementById("addMcu").value         = "";
-    document.getElementById("addStatus").value      = "aktiv";
-    document.getElementById("addAkku").value        = "";
-    document.getElementById("addDeviceError").innerText = "";
+    document.getElementById("addName").value             = "";
+    document.getElementById("addMcu").value              = "";
+    document.getElementById("addStatus").value           = "aktiv";
+    document.getElementById("addAkku").value             = "";
+    document.getElementById("addDeviceError").innerText  = "";
+    document.getElementById("addSelectedDbId").value     = "";
 
     document.getElementById("addDeviceTyp").value = typ;
 
     if (typ === "messgeraet") {
-        document.getElementById("addDeviceTitle").innerText     = "Messgerät hinzufügen";
+        document.getElementById("addDeviceTitle").innerText          = "Messgerät hinzufügen";
         document.getElementById("addMessgeraetFelder").style.display = "block";
         document.getElementById("addQuelleFelder").style.display     = "none";
         document.getElementById("addGesamtdosis").value = "";
     } else {
-        document.getElementById("addDeviceTitle").innerText     = "Strahlungsquelle hinzufügen";
+        document.getElementById("addDeviceTitle").innerText          = "Strahlungsquelle hinzufügen";
         document.getElementById("addMessgeraetFelder").style.display = "none";
         document.getElementById("addQuelleFelder").style.display     = "block";
         document.getElementById("addAlpha").value = "";
@@ -369,7 +438,83 @@ function openAddDevice(typ) {
         document.getElementById("addGamma").value = "";
     }
 
+    // Immer im "neu" Modus starten
+    setAddMode("neu");
+
     document.getElementById("addDeviceModal").style.display = "block";
+}
+
+function setAddMode(modus) {
+    const isDb = modus === "db";
+    const typ  = document.getElementById("addDeviceTyp").value;
+
+    document.getElementById("toggleNeu").classList.toggle("mode-btn-active", !isDb);
+    document.getElementById("toggleDb").classList.toggle("mode-btn-active",  isDb);
+    document.getElementById("dbAuswahlBereich").style.display = isDb ? "block" : "none";
+    document.getElementById("addSubmitBtn").innerText = isDb
+        ? "Gerät zur Übung hinzufügen"
+        : "Gerät erstellen";
+
+    // Felder leeren wenn Modus wechselt
+    document.getElementById("addName").value  = "";
+    document.getElementById("addMcu").value   = "";
+    document.getElementById("addStatus").value = "aktiv";
+    document.getElementById("addAkku").value  = "";
+    document.getElementById("addSelectedDbId").value = "";
+    if (typ === "messgeraet") document.getElementById("addGesamtdosis").value = "";
+    else {
+        document.getElementById("addAlpha").value = "";
+        document.getElementById("addBeta").value  = "";
+        document.getElementById("addGamma").value = "";
+    }
+
+    if (isDb) {
+        // DB-Geräte laden
+        fetch(`/devices/ohne_uebung?typ=${typ}`)
+            .then(r => r.json())
+            .then(geraete => {
+                dbGeraeteCache = geraete;
+                const sel = document.getElementById("dbGeraetSelect");
+                sel.innerHTML = '<option value="">-- Gerät wählen --</option>';
+                geraete.forEach(g => {
+                    const opt = document.createElement("option");
+                    opt.value = g.id;
+                    opt.innerText = g.name + (g.mac_adresse ? ` (${g.mac_adresse})` : "");
+                    sel.appendChild(opt);
+                });
+                if (geraete.length === 0) {
+                    document.getElementById("dbAuswahlHinweis").innerText =
+                        "Keine nicht zugeordneten Geräte dieses Typs in der Datenbank.";
+                } else {
+                    document.getElementById("dbAuswahlHinweis").innerText =
+                        "Wähle ein Gerät – die Felder werden automatisch befüllt und können angepasst werden.";
+                }
+            });
+    }
+}
+
+function onDbGeraetSelect() {
+    const id = document.getElementById("dbGeraetSelect").value;
+    if (!id) return;
+
+    const g = dbGeraeteCache.find(x => x.id == id);
+    if (!g) return;
+
+    // Felder befüllen
+    document.getElementById("addSelectedDbId").value = g.id;
+    document.getElementById("addName").value          = g.name        || "";
+    document.getElementById("addMcu").value           = g.mac_adresse || "";
+    document.getElementById("addStatus").value        = g.status      || "aktiv";
+    document.getElementById("addAkku").value          = g.akku        || "";
+
+    const typ = document.getElementById("addDeviceTyp").value;
+    if (typ === "messgeraet") {
+        document.getElementById("addGesamtdosis").value = g.gesamtdosis || "";
+    } else {
+        document.getElementById("addAlpha").value = g.staerke_alpha || "";
+        document.getElementById("addBeta").value  = g.staerke_beta  || "";
+        document.getElementById("addGamma").value = g.staerke_gamma || "";
+    }
 }
 
 function closeAddDevice() {
@@ -377,46 +522,91 @@ function closeAddDevice() {
 }
 
 function submitAddDevice() {
-    const name = document.getElementById("addName").value.trim();
-    const typ  = document.getElementById("addDeviceTyp").value;
+    const name      = document.getElementById("addName").value.trim();
+    const typ       = document.getElementById("addDeviceTyp").value;
+    const dbId      = document.getElementById("addSelectedDbId").value;
+    const isDbModus = !!dbId;
 
     if (!name) {
         document.getElementById("addDeviceError").innerText = "Bitte einen Namen eingeben.";
         return;
     }
 
-    const payload = {
-        name:        name,
-        typ:         typ,
-        mcu_adresse: document.getElementById("addMcu").value.trim() || null,
-        status:      document.getElementById("addStatus").value,
-        akku:        parseFloat(document.getElementById("addAkku").value) || 100.0,
-    };
-
-    if (typ === "messgeraet") {
-        payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
-    } else {
-        payload.staerke_alpha = parseFloat(document.getElementById("addAlpha").value) || 0.0;
-        payload.staerke_beta  = parseFloat(document.getElementById("addBeta").value)  || 0.0;
-        payload.staerke_gamma = parseFloat(document.getElementById("addGamma").value) || 0.0;
-    }
-
-    fetch("/add_device", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload)
-    }).then(r => {
-        if (r.ok) {
-            closeAddDevice();
-            // Das socket-Event "new_device" übernimmt das Rendern der neuen Karte
+    if (isDbModus) {
+        // DB-Modus: bestehendes Gerät aktualisieren und zur Übung hinzufügen
+        const payload = {
+            name:        name,
+            mac_adresse: document.getElementById("addMcu").value.trim() || null,
+            status:      document.getElementById("addStatus").value,
+            akku:        parseFloat(document.getElementById("addAkku").value) || null,
+        };
+        if (typ === "messgeraet") {
+            payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
         } else {
-            r.text().then(t => {
-                document.getElementById("addDeviceError").innerText = "Fehler: " + t;
-            });
+            payload.staerke_alpha = parseFloat(document.getElementById("addAlpha").value) || 0.0;
+            payload.staerke_beta  = parseFloat(document.getElementById("addBeta").value)  || 0.0;
+            payload.staerke_gamma = parseFloat(document.getElementById("addGamma").value) || 0.0;
         }
-    }).catch(() => {
-        document.getElementById("addDeviceError").innerText = "Verbindungsfehler.";
-    });
+
+        // Erst Daten aktualisieren, dann zur Übung hinzufügen
+        fetch(`/device/${dbId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        })
+        .then(r => {
+            if (!r.ok) return Promise.reject();
+            const targetId = addDeviceUebungKontext || null;
+            const url = targetId
+                ? `/device/${dbId}/add_to_specific_uebung/${targetId}`
+                : `/device/${dbId}/add_to_uebung`;
+            return fetch(url, { method: "POST" });
+        })
+        .then(r => {
+            if (r.ok) {
+                closeAddDevice();
+                // Der Server sendet "new_device" via Socket – Karte erscheint automatisch
+                return;
+            }
+            document.getElementById("addDeviceError").innerText = "Fehler beim Hinzufügen zur Übung.";
+        })
+        .catch(() => {
+            document.getElementById("addDeviceError").innerText = "Verbindungsfehler.";
+        });
+
+    } else {
+        // Neu-Modus: neues Gerät anlegen
+        const payload = {
+            name:        name,
+            typ:         typ,
+            mac_adresse: document.getElementById("addMcu").value.trim() || null,
+            status:      document.getElementById("addStatus").value,
+            akku:        parseFloat(document.getElementById("addAkku").value) || 100.0,
+        };
+        if (typ === "messgeraet") {
+            payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
+        } else {
+            payload.staerke_alpha = parseFloat(document.getElementById("addAlpha").value) || 0.0;
+            payload.staerke_beta  = parseFloat(document.getElementById("addBeta").value)  || 0.0;
+            payload.staerke_gamma = parseFloat(document.getElementById("addGamma").value) || 0.0;
+        }
+
+        fetch("/add_device", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+        }).then(r => {
+            if (r.ok) {
+                closeAddDevice();
+            } else {
+                r.text().then(t => {
+                    document.getElementById("addDeviceError").innerText = "Fehler: " + t;
+                });
+            }
+        }).catch(() => {
+            document.getElementById("addDeviceError").innerText = "Verbindungsfehler.";
+        });
+    }
 }
 
 /* =========================================================
@@ -512,4 +702,260 @@ document.addEventListener("DOMContentLoaded", function () {
                 .catch(err => console.error("Fehler:", err));
         });
     }
+});
+
+/* =========================================================
+   TAB NAVIGATION
+========================================================= */
+
+function switchTab(tab) {
+    ["dashboard", "uebungen", "live"].forEach(t => {
+        document.getElementById("page-" + t).style.display = t === tab ? "block" : "none";
+        const link = document.getElementById("tab-" + t);
+        if (link) link.classList.toggle("tab-active", t === tab);
+    });
+    if (tab === "uebungen") ladeUebungen();
+}
+
+/* =========================================================
+   ÜBUNGEN LADEN & ANZEIGEN
+========================================================= */
+
+let uebungenCache = [];
+let aktiveUebungDetailId = null;
+
+function ladeUebungen() {
+    fetch("/uebungen")
+        .then(r => r.json())
+        .then(data => {
+            uebungenCache = data;
+            renderUebungenListe(data);
+        });
+}
+
+function renderUebungenListe(uebungen) {
+    const container = document.getElementById("uebungen-liste");
+    if (!uebungen.length) {
+        container.innerHTML = '<p class="uebungen-loading">Keine Übungen vorhanden.</p>';
+        return;
+    }
+
+    container.innerHTML = uebungen.map(u => {
+        const statusClass = u.status || "vorbereitung";
+        const startStr = u.start_zeit
+            ? new Date(u.start_zeit).toLocaleString("de-DE", {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
+            : "—";
+        const endStr = u.end_zeit
+            ? new Date(u.end_zeit).toLocaleString("de-DE", {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
+            : u.status === "aktiv" ? "läuft…" : "—";
+
+        return `
+        <div class="uebung-card" onclick="openUebungDetail(${u.id})">
+            <div class="uebung-card-status ${statusClass}"></div>
+            <div class="uebung-card-body">
+                <div class="uebung-card-name">${u.name}</div>
+                <div class="uebung-card-meta">Start: ${startStr} &nbsp;|&nbsp; Ende: ${endStr}</div>
+            </div>
+            <div class="uebung-card-counts">
+                <span class="uebung-count-badge">📡 ${u.anzahl_messgeraete} Messgeräte</span>
+                <span class="uebung-count-badge">☢ ${u.anzahl_quellen} Quellen</span>
+            </div>
+            <span class="uebung-status-badge ${statusClass}">${statusClass}</span>
+        </div>`;
+    }).join("");
+}
+
+/* =========================================================
+   ÜBUNG DETAIL
+========================================================= */
+
+function openUebungDetail(id) {
+    fetch(`/uebung/${id}`)
+        .then(r => r.json())
+        .then(u => {
+            aktiveUebungDetailId = id;
+
+            document.getElementById("udTitel").innerText = u.name;
+
+            const badge = document.getElementById("udStatusBadge");
+            badge.innerText   = u.status;
+            badge.className   = "uebung-status-badge " + u.status;
+
+            document.getElementById("udStart").innerText = u.start_zeit
+                ? new Date(u.start_zeit).toLocaleString("de-DE") : "—";
+            document.getElementById("udEnde").innerText = u.end_zeit
+                ? new Date(u.end_zeit).toLocaleString("de-DE")
+                : u.status === "aktiv" ? "läuft…" : "—";
+
+            const messgeraete = u.geraete.filter(g => g.typ === "messgeraet");
+            const quellen     = u.geraete.filter(g => g.typ === "quelle");
+
+            document.getElementById("udAnzahlMessgeraete").innerText = messgeraete.length;
+            document.getElementById("udAnzahlQuellen").innerText     = quellen.length;
+
+            renderUdGeraeteListe("udMessgeraeteListe", messgeraete);
+            renderUdGeraeteListe("udQuellenListe",     quellen);
+
+            // Aktions-Buttons
+            const aktionenDiv = document.getElementById("udAktionenHeader");
+            aktionenDiv.innerHTML = "";
+
+            if (u.status !== "aktiv") {
+                const btnAktiv = document.createElement("button");
+                btnAktiv.className   = "btn btn-login";
+                btnAktiv.innerText   = "▶ Aktivieren";
+                btnAktiv.onclick     = () => uebungAktivieren(id);
+                aktionenDiv.appendChild(btnAktiv);
+            } else {
+                const btnStop = document.createElement("button");
+                btnStop.className  = "btn btn-logout";
+                btnStop.innerText  = "■ Beenden";
+                btnStop.onclick    = () => uebungBeenden(id);
+                aktionenDiv.appendChild(btnStop);
+            }
+
+            document.getElementById("uebungDetailModal").style.display = "block";
+        });
+}
+
+function renderUdGeraeteListe(containerId, geraete) {
+    const el = document.getElementById(containerId);
+    if (!geraete.length) {
+        el.innerHTML = '<span class="ud-empty">Keine Geräte zugeordnet</span>';
+        return;
+    }
+    el.innerHTML = geraete.map(g => `
+        <div class="ud-geraet-row" id="ud-geraet-${g.id}">
+            <span class="ud-geraet-name">${g.name}</span>
+            <span class="ud-geraet-mac">${g.mac_adresse || "—"}</span>
+            <span class="ud-geraet-status ${g.status || 'inaktiv'}">${g.status || "—"}</span>
+            <button class="ud-geraet-remove" title="Aus Übung entfernen"
+                    onclick="udGeraetEntfernen(${g.id}, event)">✕</button>
+        </div>`).join("");
+}
+
+function udGeraetEntfernen(geraetId, event) {
+    event.stopPropagation();
+    if (!confirm("Gerät aus der Übung entfernen?")) return;
+    fetch(`/device/${geraetId}/remove_from_uebung`, { method: "POST" })
+        .then(r => {
+            if (r.ok) {
+                const row = document.getElementById("ud-geraet-" + geraetId);
+                if (row) row.remove();
+                openUebungDetail(aktiveUebungDetailId); // neu laden für Zähler
+            }
+        });
+}
+
+function closeUebungDetail() {
+    document.getElementById("uebungDetailModal").style.display = "none";
+    aktiveUebungDetailId = null;
+    ladeUebungen(); // Liste aktualisieren
+}
+
+/* =========================================================
+   ÜBUNG AKTIVIEREN / BEENDEN
+========================================================= */
+
+function uebungAktivieren(id) {
+    fetch(`/uebung/${id}/aktivieren`, { method: "POST" })
+        .then(r => {
+            if (r.ok) {
+                closeUebungDetail();
+                ladeUebungen();
+            }
+        });
+}
+
+function uebungBeenden(id) {
+    if (!confirm("Übung als abgeschlossen markieren?")) return;
+    fetch(`/uebung/${id}/beenden`, { method: "POST" })
+        .then(r => {
+            if (r.ok) {
+                closeUebungDetail();
+                ladeUebungen();
+            }
+        });
+}
+
+function deleteUebung() {
+    if (!aktiveUebungDetailId) return;
+    const name = document.getElementById("udTitel").innerText;
+    if (!confirm(`Übung „${name}" dauerhaft löschen?\nAlle Gerätezuordnungen werden aufgehoben.`)) return;
+    fetch(`/uebung/${aktiveUebungDetailId}`, { method: "DELETE" })
+        .then(r => {
+            if (r.ok) {
+                closeUebungDetail();
+                ladeUebungen();
+            }
+        });
+}
+
+/* =========================================================
+   NEUE ÜBUNG
+========================================================= */
+
+function openNeueUebung() {
+    document.getElementById("neueUebungName").value   = "";
+    document.getElementById("neueUebungStatus").value = "vorbereitung";
+    document.getElementById("neueUebungStart").value  = "";
+    document.getElementById("neueUebungError").innerText = "";
+    document.getElementById("neueUebungModal").style.display = "block";
+}
+
+function closeNeueUebung() {
+    document.getElementById("neueUebungModal").style.display = "none";
+}
+
+function submitNeueUebung() {
+    const name   = document.getElementById("neueUebungName").value.trim();
+    const status = document.getElementById("neueUebungStatus").value;
+    const start  = document.getElementById("neueUebungStart").value;
+
+    if (!name) {
+        document.getElementById("neueUebungError").innerText = "Bitte einen Namen eingeben.";
+        return;
+    }
+
+    fetch("/uebungen", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, status, start_zeit: start || null })
+    }).then(r => {
+        if (r.ok) {
+            closeNeueUebung();
+            ladeUebungen();
+        } else {
+            r.text().then(t => document.getElementById("neueUebungError").innerText = "Fehler: " + t);
+        }
+    });
+}
+
+/* =========================================================
+   GERÄT ZU ÜBUNG HINZUFÜGEN (aus Übungs-Detail)
+========================================================= */
+
+function openAddDeviceForUebung(typ) {
+    // addDeviceModal nutzen, aber mit uebung-kontext
+    addDeviceUebungKontext = aktiveUebungDetailId;
+    openAddDevice(typ);
+}
+
+// Überschreibe add_to_uebung um spezifische Übung zu nutzen
+let addDeviceUebungKontext = null;
+
+// Übungs-Detail nach new_device aktualisieren wird im originalen Handler erledigt
+// (addDeviceUebungKontext wird dort geprüft)
+
+// Close-Handler erweitern
+document.addEventListener("DOMContentLoaded", function() {
+    document.addEventListener("click", e => {
+        const neueUebungModal  = document.getElementById("neueUebungModal");
+        const uebungDetailModal = document.getElementById("uebungDetailModal");
+        if (neueUebungModal   && e.target === neueUebungModal)   closeNeueUebung();
+        if (uebungDetailModal && e.target === uebungDetailModal) closeUebungDetail();
+    });
+    document.addEventListener("keydown", e => {
+        if (e.key === "Escape") { closeNeueUebung(); closeUebungDetail(); }
+    });
 });

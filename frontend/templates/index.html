@@ -23,9 +23,9 @@
     </div>
 
     <nav class="nav-links">
-        <div class="nav-item"><a href="#">Dashboard</a></div>
-        <div class="nav-item"><a href="#">Übungen</a></div>
-        <div class="nav-item"><a href="#">Live-Messung</a></div>
+        <div class="nav-item"><a href="#" id="tab-dashboard" class="tab-link tab-active" onclick="switchTab('dashboard')">Dashboard</a></div>
+        <div class="nav-item"><a href="#" id="tab-uebungen" class="tab-link" onclick="switchTab('uebungen')">Übungen</a></div>
+        <div class="nav-item"><a href="#" id="tab-live" class="tab-link" onclick="switchTab('live')">Live-Messung</a></div>
     </nav>
 
     <div class="nav-auth">
@@ -37,6 +37,9 @@
         {% endif %}
     </div>
 </header>
+
+<!-- ===================== TAB: DASHBOARD ===================== -->
+<div id="page-dashboard" class="tab-page">
 
 <!-- Dashboard Titel -->
 <div class="page-header">
@@ -55,7 +58,7 @@
              data-id="{{ d.id }}"
              data-typ="{{ d.typ }}"
              data-name="{{ d.name }}"
-             data-mcu="{{ d.mcu_adresse or '' }}"
+             data-mcu="{{ d.mac_adresse or '' }}"
              data-status="{{ d.status or '' }}"
              data-akku="{{ d.akku or '' }}"
              data-gesamtdosis="{{ d.gesamtdosis }}">
@@ -91,7 +94,7 @@
              data-id="{{ d.id }}"
              data-typ="{{ d.typ }}"
              data-name="{{ d.name }}"
-             data-mcu="{{ d.mcu_adresse or '' }}"
+             data-mcu="{{ d.mac_adresse or '' }}"
              data-status="{{ d.status or '' }}"
              data-akku="{{ d.akku or '' }}"
              data-alpha="{{ d.staerke_alpha }}"
@@ -135,6 +138,36 @@
 </section>
 
 <main></main>
+
+</div><!-- end page-dashboard -->
+
+<!-- ===================== TAB: ÜBUNGEN ===================== -->
+<div id="page-uebungen" class="tab-page" style="display:none;">
+
+<div class="page-header uebungen-header">
+    <div>
+        <h2>Übungen</h2>
+        <p class="page-subtitle">Übungen verwalten und aktivieren</p>
+    </div>
+    {% if current_user.is_authenticated %}
+    <button class="btn btn-login" onclick="openNeueUebung()">+ Neue Übung</button>
+    {% endif %}
+</div>
+
+<div id="uebungen-liste" class="uebungen-liste">
+    <!-- wird per JS befüllt -->
+    <div class="uebungen-loading">Lade Übungen…</div>
+</div>
+
+</div><!-- end page-uebungen -->
+
+<!-- ===================== TAB: LIVE ===================== -->
+<div id="page-live" class="tab-page" style="display:none;">
+<div class="page-header">
+    <h2>Live-Messung</h2>
+    <p class="page-subtitle">Kommt bald</p>
+</div>
+</div><!-- end page-live -->
 
 <!-- LOGIN MODAL -->
 <div id="loginModal" class="modal">
@@ -190,9 +223,9 @@
                 </div>
 
                 <div class="detail-feld">
-                    <label>MCU-Adresse</label>
+                    <label>MAC-Adresse</label>
                     {% if current_user.is_authenticated %}
-                        <input type="text" id="detailMcu" class="detail-input" placeholder="z.B. 192.168.1.10">
+                        <input type="text" id="detailMcu" class="detail-input" placeholder="z.B. AA:BB:CC:DD:EE:FF">
                     {% else %}
                         <span id="detailMcu" class="detail-wert"></span>
                     {% endif %}
@@ -289,6 +322,21 @@
 
             </div>
         </div>
+
+        <!-- Gefahrenzone: Löschen (nur für eingeloggte Nutzer) -->
+        {% if current_user.is_authenticated %}
+        <div class="detail-danger-zone">
+            <span class="danger-label">Gefahrenzone</span>
+            <div class="danger-buttons">
+                <button class="btn btn-danger-soft" onclick="removeFromUebung()">
+                    ⊖ Aus Übung entfernen
+                </button>
+                <button class="btn btn-danger" onclick="deleteDevice()">
+                    🗑 Aus Datenbank löschen
+                </button>
+            </div>
+        </div>
+        {% endif %}
     </div>
 </div>
 
@@ -299,8 +347,32 @@
         <h2 id="addDeviceTitle">Gerät hinzufügen</h2>
 
         <input type="hidden" id="addDeviceTyp" value="">
+        <input type="hidden" id="addSelectedDbId" value="">
 
-        <div class="detail-body" style="margin-top: 20px;">
+        <!-- Modus-Toggle -->
+        <div class="add-mode-toggle">
+            <button id="toggleNeu" class="mode-btn mode-btn-active" onclick="setAddMode('neu')">
+                ✦ Neu erstellen
+            </button>
+            <button id="toggleDb" class="mode-btn" onclick="setAddMode('db')">
+                ⊕ Aus Datenbank wählen
+            </button>
+        </div>
+
+        <!-- DB-Auswahl (nur im DB-Modus sichtbar) -->
+        <div id="dbAuswahlBereich" style="display:none;">
+            <div class="detail-feld" style="margin-top:12px;">
+                <label>Gerät aus Datenbank</label>
+                <select id="dbGeraetSelect" class="detail-input" onchange="onDbGeraetSelect()">
+                    <option value="">-- Gerät wählen --</option>
+                </select>
+            </div>
+            <p id="dbAuswahlHinweis" class="db-hinweis">
+                Wähle ein Gerät – die Felder werden automatisch befüllt und können vor dem Hinzufügen angepasst werden.
+            </p>
+        </div>
+
+        <div class="detail-body" style="margin-top: 16px;">
 
             <!-- Linke Spalte: Basisinfos -->
             <div class="detail-col">
@@ -312,8 +384,8 @@
                 </div>
 
                 <div class="detail-feld">
-                    <label>MCU-Adresse</label>
-                    <input type="text" id="addMcu" class="detail-input" placeholder="z.B. 192.168.1.30">
+                    <label>MAC-Adresse</label>
+                    <input type="text" id="addMcu" class="detail-input" placeholder="z.B. AA:BB:CC:DD:EE:FF">
                 </div>
 
                 <div class="detail-feld">
@@ -364,13 +436,97 @@
         </div>
 
         <p id="addDeviceError" class="error" style="margin-top:12px;"></p>
-        <button class="btn btn-login" style="width:100%; margin-top:8px;" onclick="submitAddDevice()">
+        <button id="addSubmitBtn" class="btn btn-login" style="width:100%; margin-top:8px;" onclick="submitAddDevice()">
             Gerät erstellen
         </button>
     </div>
 </div>
 
 <script src="/static/js/main.js"></script>
+
+
+<!-- NEUE ÜBUNG MODAL -->
+<div id="neueUebungModal" class="modal">
+    <div class="modal-content" style="width:420px; text-align:left;">
+        <span class="close" onclick="closeNeueUebung()">&times;</span>
+        <h2 style="margin-top:0;">Neue Übung erstellen</h2>
+
+        <div class="detail-feld">
+            <label>Name *</label>
+            <input type="text" id="neueUebungName" class="detail-input" placeholder="z.B. Übung Delta 2025">
+        </div>
+        <div class="detail-feld">
+            <label>Status</label>
+            <select id="neueUebungStatus" class="detail-input">
+                <option value="vorbereitung">Vorbereitung</option>
+                <option value="aktiv">Aktiv (andere werden deaktiviert)</option>
+                <option value="abgeschlossen">Abgeschlossen</option>
+            </select>
+        </div>
+        <div class="detail-feld">
+            <label>Startzeit (optional)</label>
+            <input type="datetime-local" id="neueUebungStart" class="detail-input">
+        </div>
+        <p id="neueUebungError" class="error" style="margin-top:8px;"></p>
+        <button class="btn btn-login" style="width:100%; margin-top:12px;" onclick="submitNeueUebung()">
+            Übung erstellen
+        </button>
+    </div>
+</div>
+
+<!-- ÜBUNG DETAIL MODAL -->
+<div id="uebungDetailModal" class="modal">
+    <div class="modal-content" style="width:780px; max-width:92vw; max-height:88vh; overflow-y:auto; text-align:left; padding:30px; margin:2% auto;">
+        <span class="close" onclick="closeUebungDetail()">&times;</span>
+
+        <div class="detail-header">
+            <div style="flex:1">
+                <h2 id="udTitel" style="margin:0 0 6px 0;"></h2>
+                <span id="udStatusBadge" class="uebung-status-badge"></span>
+            </div>
+            <div id="udAktionenHeader" style="display:flex; gap:8px; flex-shrink:0;"></div>
+        </div>
+
+        <!-- Meta-Infos -->
+        <div class="ud-meta">
+            <div class="ud-meta-item"><span class="ud-meta-label">Start</span><span id="udStart">—</span></div>
+            <div class="ud-meta-item"><span class="ud-meta-label">Ende</span><span id="udEnde">—</span></div>
+            <div class="ud-meta-item"><span class="ud-meta-label">Messgeräte</span><span id="udAnzahlMessgeraete">—</span></div>
+            <div class="ud-meta-item"><span class="ud-meta-label">Quellen</span><span id="udAnzahlQuellen">—</span></div>
+        </div>
+
+        <!-- Geräte-Sektionen -->
+        <div class="section-header" style="margin:20px 0 4px 0; padding:0 0 8px 0;">
+            <h3 style="font-size:1rem;">Messgeräte
+                {% if current_user.is_authenticated %}
+                <button class="btn btn-login" style="float:right; padding:4px 10px; font-size:12px;"
+                        onclick="openAddDeviceForUebung('messgeraet')">+ Hinzufügen</button>
+                {% endif %}
+            </h3>
+        </div>
+        <div id="udMessgeraeteListe" class="ud-geraete-liste"></div>
+
+        <div class="section-header" style="margin:20px 0 4px 0; padding:0 0 8px 0;">
+            <h3 style="font-size:1rem;">Strahlungsquellen
+                {% if current_user.is_authenticated %}
+                <button class="btn btn-login" style="float:right; padding:4px 10px; font-size:12px;"
+                        onclick="openAddDeviceForUebung('quelle')">+ Hinzufügen</button>
+                {% endif %}
+            </h3>
+        </div>
+        <div id="udQuellenListe" class="ud-geraete-liste"></div>
+
+        <!-- Gefahrenzone -->
+        {% if current_user.is_authenticated %}
+        <div class="detail-danger-zone" style="margin-top:24px;">
+            <span class="danger-label">Gefahrenzone</span>
+            <div class="danger-buttons">
+                <button class="btn btn-danger" onclick="deleteUebung()">🗑 Übung löschen</button>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
 
 </body>
 </html>

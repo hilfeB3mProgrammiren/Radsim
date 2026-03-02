@@ -631,3 +631,308 @@ main {
     padding: 8px 12px;
     border-radius: 4px;
 }
+
+/* =========================================================
+   DETAIL MODAL – GEFAHRENZONE
+========================================================= */
+
+.detail-danger-zone {
+    margin-top: 24px;
+    padding: 16px;
+    border: 1px solid #5a1a1a;
+    border-radius: 6px;
+    background-color: #2a1010;
+}
+
+.danger-label {
+    display: block;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #e74c3c;
+    margin-bottom: 12px;
+    font-weight: bold;
+}
+
+.danger-buttons {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-danger-soft {
+    background-color: #5d3a1a;
+    color: #f0a070;
+    flex: 1;
+}
+
+.btn-danger-soft:hover {
+    background-color: #7a4a20;
+    color: #fff;
+}
+
+.btn-danger {
+    background-color: #7b1c1c;
+    color: #ffaaaa;
+    flex: 1;
+}
+
+.btn-danger:hover {
+    background-color: #c0392b;
+    color: #fff;
+}
+
+/* =========================================================
+   ADD DEVICE MODAL – MODUS TOGGLE
+========================================================= */
+
+.add-mode-toggle {
+    display: flex;
+    gap: 0;
+    margin-top: 16px;
+    border-radius: 6px;
+    overflow: hidden;
+    border: 1px solid #444;
+}
+
+.mode-btn {
+    flex: 1;
+    padding: 10px 16px;
+    background: #2a2a2a;
+    color: #888;
+    border: none;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+    transition: background-color 0.2s, color 0.2s;
+    border-right: 1px solid #444;
+}
+
+.mode-btn:last-child {
+    border-right: none;
+}
+
+.mode-btn:hover {
+    background: #333;
+    color: #ccc;
+}
+
+.mode-btn-active {
+    background: #3498db;
+    color: #fff;
+}
+
+.mode-btn-active:hover {
+    background: #2980b9;
+    color: #fff;
+}
+
+.db-hinweis {
+    font-size: 12px;
+    color: #888;
+    margin: 8px 0 0 0;
+    font-style: italic;
+}
+
+/* =========================================================
+   TAB NAVIGATION
+========================================================= */
+
+.tab-link {
+    padding: 8px 4px;
+    border-bottom: 2px solid transparent;
+    transition: border-color 0.2s, color 0.2s;
+}
+
+.tab-link.tab-active {
+    border-bottom: 2px solid #3498db;
+    color: #3498db !important;
+}
+
+/* =========================================================
+   ÜBUNGEN SEITE
+========================================================= */
+
+.uebungen-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px 20px 0 20px;
+}
+
+.uebungen-liste {
+    padding: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.uebungen-loading {
+    color: #888;
+    font-size: 14px;
+    padding: 20px 0;
+}
+
+.uebung-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 10px;
+    padding: 18px 20px;
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    cursor: pointer;
+    transition: box-shadow 0.2s, transform 0.15s;
+}
+
+.uebung-card:hover {
+    box-shadow: 0 4px 14px rgba(0,0,0,0.1);
+    transform: translateY(-1px);
+}
+
+.uebung-card-status {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.uebung-card-status.aktiv        { background: #0ce61a; box-shadow: 0 0 6px #0ce61a; }
+.uebung-card-status.vorbereitung { background: #f5c424; }
+.uebung-card-status.abgeschlossen{ background: #888; }
+
+.uebung-card-body {
+    flex: 1;
+}
+
+.uebung-card-name {
+    font-weight: bold;
+    font-size: 15px;
+    color: #111;
+}
+
+.uebung-card-meta {
+    font-size: 12px;
+    color: #888;
+    margin-top: 3px;
+}
+
+.uebung-card-counts {
+    display: flex;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.uebung-count-badge {
+    font-size: 12px;
+    background: #f0f4f7;
+    border: 1px solid #dde3e8;
+    border-radius: 12px;
+    padding: 3px 10px;
+    color: #555;
+}
+
+.uebung-status-badge {
+    display: inline-block;
+    font-size: 11px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-weight: bold;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.uebung-status-badge.aktiv         { background: #0ce61a; color: #000; }
+.uebung-status-badge.vorbereitung  { background: #f5c424; color: #000; }
+.uebung-status-badge.abgeschlossen { background: #555;    color: #fff; }
+
+/* =========================================================
+   ÜBUNG DETAIL MODAL
+========================================================= */
+
+.ud-meta {
+    display: flex;
+    gap: 24px;
+    margin: 16px 0 8px 0;
+    padding: 14px 16px;
+    background: #2a2a2a;
+    border-radius: 8px;
+    flex-wrap: wrap;
+}
+
+.ud-meta-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.ud-meta-label {
+    font-size: 11px;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.ud-geraete-liste {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 4px;
+    min-height: 32px;
+}
+
+.ud-geraet-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px;
+    background: #2a2a2a;
+    border-radius: 6px;
+    font-size: 13px;
+}
+
+.ud-geraet-name {
+    flex: 1;
+    font-weight: 500;
+    color: #eee;
+}
+
+.ud-geraet-mac {
+    color: #888;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.ud-geraet-status {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #333;
+    color: #aaa;
+}
+
+.ud-geraet-status.aktiv   { background: #0a3a0a; color: #0ce61a; }
+.ud-geraet-status.inaktiv { background: #333;    color: #888; }
+.ud-geraet-status.fehler  { background: #3a0a0a; color: #e74c3c; }
+
+.ud-geraet-remove {
+    background: none;
+    border: none;
+    color: #666;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+}
+
+.ud-geraet-remove:hover {
+    color: #e74c3c;
+    background: #3a1010;
+}
+
+.ud-empty {
+    color: #666;
+    font-size: 13px;
+    font-style: italic;
+    padding: 8px 0;
+}
