@@ -163,10 +163,88 @@
 
 <!-- ===================== TAB: LIVE ===================== -->
 <div id="page-live" class="tab-page" style="display:none;">
-<div class="page-header">
-    <h2>Live-Messung</h2>
-    <p class="page-subtitle">Kommt bald</p>
+
+<div class="page-header live-header">
+    <div>
+        <h2>Strahlungsverlauf</h2>
+        <p class="page-subtitle">Messwerte aus der Datenbank</p>
+    </div>
+    <div class="live-controls">
+        <div class="live-control-group">
+            <label class="live-label">Übung</label>
+            <select id="liveUebungSelect" class="live-select" onchange="onLiveUebungChange()">
+                <option value="">Lade…</option>
+            </select>
+        </div>
+        <div class="live-control-group">
+            <label class="live-label">Gerät</label>
+            <select id="liveGeraetSelect" class="live-select" onchange="ladeCharts()">
+                <option value="">Alle Messgeräte</option>
+            </select>
+        </div>
+        <div class="live-control-group">
+            <label class="live-label">Datenpunkte</label>
+            <select id="liveLimitSelect" class="live-select" onchange="ladeCharts()">
+                <option value="50">Letzte 50</option>
+                <option value="100" selected>Letzte 100</option>
+                <option value="200">Letzte 200</option>
+                <option value="500">Letzte 500</option>
+            </select>
+        </div>
+        <button class="btn btn-login live-refresh-btn" onclick="ladeCharts()">↺ Aktualisieren</button>
+    </div>
 </div>
+
+<!-- Zusammenfassungs-Kacheln -->
+<div id="liveStatCards" class="live-stat-cards"></div>
+
+<!-- Diagramme -->
+<div class="live-charts-grid">
+
+    <div class="live-chart-card live-chart-wide">
+        <div class="live-chart-header">
+            <span class="live-chart-title">Aktuelle Dosisrate (mSv/h)</span>
+            <span class="live-chart-sub" id="liveCpsSubtitle"></span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartCpsVerlauf"></canvas>
+        </div>
+    </div>
+
+    <div class="live-chart-card live-chart-wide">
+        <div class="live-chart-header">
+            <span class="live-chart-title">Gesamtdosis (mSv)</span>
+            <span class="live-chart-sub" id="liveDosisSubtitle"></span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartDosisVerlauf"></canvas>
+        </div>
+    </div>
+
+    <div class="live-chart-card">
+        <div class="live-chart-header">
+            <span class="live-chart-title">Aktuelle Dosisraten – Vergleich</span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartCpsBar"></canvas>
+        </div>
+    </div>
+
+    <div class="live-chart-card">
+        <div class="live-chart-header">
+            <span class="live-chart-title">Gesamtdosen – Vergleich</span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartDosisBar"></canvas>
+        </div>
+    </div>
+
+</div>
+
+<div id="liveEmptyHint" class="live-empty-hint" style="display:none;">
+    Keine Messdaten für diese Auswahl vorhanden.
+</div>
+
 </div><!-- end page-live -->
 
 <!-- LOGIN MODAL -->
@@ -476,53 +554,82 @@
 
 <!-- ÜBUNG DETAIL MODAL -->
 <div id="uebungDetailModal" class="modal">
-    <div class="modal-content" style="width:780px; max-width:92vw; max-height:88vh; overflow-y:auto; text-align:left; padding:30px; margin:2% auto;">
-        <span class="close" onclick="closeUebungDetail()">&times;</span>
-
-        <div class="detail-header">
-            <div style="flex:1">
-                <h2 id="udTitel" style="margin:0 0 6px 0;"></h2>
+    <div class="ud-modal-content">
+        <!-- Header -->
+        <div class="ud-modal-header">
+            <div class="ud-modal-title-block">
+                <h2 id="udTitel"></h2>
                 <span id="udStatusBadge" class="uebung-status-badge"></span>
             </div>
-            <div id="udAktionenHeader" style="display:flex; gap:8px; flex-shrink:0;"></div>
+            <div class="ud-modal-header-actions">
+                <div id="udAktionenHeader"></div>
+                <button class="ud-close-btn" onclick="closeUebungDetail()">✕</button>
+            </div>
         </div>
 
-        <!-- Meta-Infos -->
-        <div class="ud-meta">
-            <div class="ud-meta-item"><span class="ud-meta-label">Start</span><span id="udStart">—</span></div>
-            <div class="ud-meta-item"><span class="ud-meta-label">Ende</span><span id="udEnde">—</span></div>
-            <div class="ud-meta-item"><span class="ud-meta-label">Messgeräte</span><span id="udAnzahlMessgeraete">—</span></div>
-            <div class="ud-meta-item"><span class="ud-meta-label">Quellen</span><span id="udAnzahlQuellen">—</span></div>
+        <!-- Meta-Streifen -->
+        <div class="ud-meta-strip">
+            <div class="ud-meta-item">
+                <span class="ud-meta-label">▶ Start</span>
+                <span id="udStart" class="ud-meta-value">—</span>
+            </div>
+            <div class="ud-meta-divider"></div>
+            <div class="ud-meta-item">
+                <span class="ud-meta-label">■ Ende</span>
+                <span id="udEnde" class="ud-meta-value">—</span>
+            </div>
+            <div class="ud-meta-divider"></div>
+            <div class="ud-meta-item">
+                <span class="ud-meta-label">📡 Messgeräte</span>
+                <span id="udAnzahlMessgeraete" class="ud-meta-value ud-meta-count">—</span>
+            </div>
+            <div class="ud-meta-divider"></div>
+            <div class="ud-meta-item">
+                <span class="ud-meta-label">☢ Quellen</span>
+                <span id="udAnzahlQuellen" class="ud-meta-value ud-meta-count">—</span>
+            </div>
         </div>
 
-        <!-- Geräte-Sektionen -->
-        <div class="section-header" style="margin:20px 0 4px 0; padding:0 0 8px 0;">
-            <h3 style="font-size:1rem;">Messgeräte
-                {% if current_user.is_authenticated %}
-                <button class="btn btn-login" style="float:right; padding:4px 10px; font-size:12px;"
-                        onclick="openAddDeviceForUebung('messgeraet')">+ Hinzufügen</button>
-                {% endif %}
-            </h3>
+        <!-- Ansichtsmodus-Banner -->
+        <div id="udReadonlyBanner" class="ud-readonly-banner" style="display:none;">
+            👁 Ansichtsmodus – Diese Übung ist abgeschlossen und kann nicht mehr bearbeitet werden.
         </div>
-        <div id="udMessgeraeteListe" class="ud-geraete-liste"></div>
 
-        <div class="section-header" style="margin:20px 0 4px 0; padding:0 0 8px 0;">
-            <h3 style="font-size:1rem;">Strahlungsquellen
-                {% if current_user.is_authenticated %}
-                <button class="btn btn-login" style="float:right; padding:4px 10px; font-size:12px;"
-                        onclick="openAddDeviceForUebung('quelle')">+ Hinzufügen</button>
-                {% endif %}
-            </h3>
+        <!-- Zweispaltiges Layout -->
+        <div class="ud-columns">
+
+            <!-- Linke Spalte: Messgeräte -->
+            <div class="ud-column">
+                <div class="ud-column-header">
+                    <h3>📡 Messgeräte</h3>
+                    {% if current_user.is_authenticated %}
+                    <button id="udBtnAddMessgeraet" class="ud-add-btn" onclick="openAddDeviceForUebung('messgeraet')">
+                        + Hinzufügen
+                    </button>
+                    {% endif %}
+                </div>
+                <div id="udMessgeraeteListe" class="ud-geraete-liste"></div>
+            </div>
+
+            <!-- Rechte Spalte: Quellen -->
+            <div class="ud-column">
+                <div class="ud-column-header">
+                    <h3>☢ Strahlungsquellen</h3>
+                    {% if current_user.is_authenticated %}
+                    <button id="udBtnAddQuelle" class="ud-add-btn" onclick="openAddDeviceForUebung('quelle')">
+                        + Hinzufügen
+                    </button>
+                    {% endif %}
+                </div>
+                <div id="udQuellenListe" class="ud-geraete-liste"></div>
+            </div>
+
         </div>
-        <div id="udQuellenListe" class="ud-geraete-liste"></div>
 
         <!-- Gefahrenzone -->
         {% if current_user.is_authenticated %}
-        <div class="detail-danger-zone" style="margin-top:24px;">
-            <span class="danger-label">Gefahrenzone</span>
-            <div class="danger-buttons">
-                <button class="btn btn-danger" onclick="deleteUebung()">🗑 Übung löschen</button>
-            </div>
+        <div id="udGefahrenzone" class="ud-footer">
+            <button class="btn btn-danger" onclick="deleteUebung()">🗑 Übung löschen</button>
         </div>
         {% endif %}
     </div>

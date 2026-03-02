@@ -19,6 +19,29 @@ function updateDeviceCard(data) {
     const card = document.querySelector(`.device-card[data-id='${data.id}']`);
     if (!card) return;
 
+    // Name
+    if (data.name !== undefined) {
+        card.dataset.name = data.name;
+        const nameEl = card.querySelector(".device-name");
+        if (nameEl) nameEl.innerText = data.name;
+    }
+
+    // MAC-Adresse
+    if (data.mac_adresse !== undefined) {
+        card.dataset.mcu = data.mac_adresse || "";
+    }
+
+    // Status
+    if (data.status !== undefined) {
+        card.dataset.status = data.status || "";
+    }
+
+    // Akku
+    if (data.akku !== undefined) {
+        card.dataset.akku = data.akku ?? "";
+    }
+
+    // Messwerte (Messgerät)
     const currentEl = card.querySelector(".current-dose");
     const totalEl   = card.querySelector(".total-dose");
 
@@ -34,10 +57,7 @@ function updateDeviceCard(data) {
         card.dataset.gesamtdosis = v;
     }
 
-    if (data.mac_adresse !== undefined) {
-        card.dataset.mcu = data.mac_adresse || "";
-    }
-
+    // Strahlungswerte (Quelle)
     const felder = { alpha: ".staerke-alpha", beta: ".staerke-beta", gamma: ".staerke-gamma" };
     for (const [typ, selector] of Object.entries(felder)) {
         const key = "staerke_" + typ;
@@ -78,9 +98,64 @@ socket.on("new_device", device => {
     const container   = document.getElementById(containerId);
     if (!container) return;
 
-    // Neue Karte vor der Add-Karte einfügen
-    const addCard = container.querySelector(".add-device-card");
+    // Karte schon vorhanden? Dann nur updaten, nicht doppelt einfügen
+    const existing = container.querySelector(`.device-card[data-id='${device.id}']`);
+    if (existing) {
+        updateDeviceCard(device);
+    } else {
+        const addCard = container.querySelector(".add-device-card");
+        const card    = buildDeviceCard(device);
+        if (addCard) container.insertBefore(card, addCard);
+        else         container.appendChild(card);
+        bindCardClick(card);
+    }
 
+    // Sofort aktuelle Messwerte für dieses Gerät laden
+    fetch("/measurements/latest")
+        .then(r => r.json())
+        .then(messungen => messungen.forEach(m => updateDeviceCard(m)));
+
+    // Falls aus Übungs-Detail heraus hinzugefügt → Detail neu laden
+    if (typeof aktiveUebungDetailId !== "undefined" && aktiveUebungDetailId) {
+        openUebungDetail(aktiveUebungDetailId);
+    }
+});
+
+/* =========================================================
+   ÜBUNG – Live Badge + Dashboard-Reload
+========================================================= */
+
+function reloadDashboard(uebungId) {
+    // Alle bestehenden Karten (außer Add-Karten) entfernen
+    document.querySelectorAll(".device-card:not(.add-device-card)").forEach(c => c.remove());
+
+    if (!uebungId) return;
+
+    // Geräte der neuen Übung laden und Karten neu rendern
+    fetch(`/uebung/${uebungId}`)
+        .then(r => r.json())
+        .then(u => {
+            u.geraete.forEach(device => {
+                const containerId = device.typ === "messgeraet" ? "devices-list" : "sources-list";
+                const container   = document.getElementById(containerId);
+                if (!container) return;
+
+                const addCard = container.querySelector(".add-device-card");
+                const card    = buildDeviceCard(device);
+
+                if (addCard) container.insertBefore(card, addCard);
+                else         container.appendChild(card);
+                bindCardClick(card);
+            });
+
+            // Letzte Messwerte für alle neuen Karten sofort holen
+            fetch("/measurements/latest")
+                .then(r => r.json())
+                .then(messungen => messungen.forEach(m => updateDeviceCard(m)));
+        });
+}
+
+function buildDeviceCard(device) {
     const card = document.createElement("div");
     card.classList.add("device-card");
     card.dataset.id     = device.id;
@@ -88,18 +163,19 @@ socket.on("new_device", device => {
     card.dataset.name   = device.name;
     card.dataset.mcu    = device.mac_adresse || "";
     card.dataset.status = device.status || "";
-    card.dataset.akku   = device.akku || "";
+    card.dataset.akku   = device.akku ?? "";
 
     const icon = device.typ === "messgeraet" ? "geiger_icon.png" : "quelle_icon.png";
 
     if (device.typ === "messgeraet") {
         card.dataset.gesamtdosis = device.gesamtdosis || 0;
+        const v = parseFloat(device.gesamtdosis || 0);
         card.innerHTML = `
             <div class="device-icon"><img src="/static/img/${icon}" alt="${device.name}"></div>
             <div class="device-name">${device.name}</div>
             <div class="device-doses">
-                <div class="current-dose">— mSv/h</div>
-                <div class="total-dose">${parseFloat(device.gesamtdosis || 0).toFixed(2)} mSv</div>
+                <div class="current-dose dose-green">— mSv/h</div>
+                <div class="total-dose ${doseClass(v)}">${v.toFixed(2)} mSv</div>
             </div>`;
     } else {
         card.dataset.alpha = device.staerke_alpha || 0;
@@ -129,24 +205,16 @@ socket.on("new_device", device => {
                 </div>
             </div>`;
     }
+    return card;
+}
 
-    // Vor der Add-Karte einfügen, falls vorhanden
-    if (addCard) {
-        container.insertBefore(card, addCard);
-    } else {
-        container.appendChild(card);
-    }
-    bindCardClick(card);
-
-    // Falls aus Übungs-Detail heraus hinzugefügt → Detail neu laden
-    if (typeof aktiveUebungDetailId !== "undefined" && aktiveUebungDetailId) {
-        openUebungDetail(aktiveUebungDetailId);
-    }
-});
-
-/* =========================================================
-   ÜBUNG – Live Badge
-========================================================= */
+function doseClass(v) {
+    if (v < 20)       return "dose-green";
+    if (v < 50)       return "dose-yellow";
+    if (v < 100)      return "dose-orange";
+    if (v < 200)      return "dose-red";
+    return "dose-purple";
+}
 
 socket.on("uebung_gestartet", data => {
     const badge = document.querySelector(".uebung-badge");
@@ -155,6 +223,7 @@ socket.on("uebung_gestartet", data => {
         badge.classList.add("aktiv");
         badge.innerText = "● " + data.name;
     }
+    reloadDashboard(data.id);
 });
 
 socket.on("uebung_gestoppt", () => {
@@ -164,6 +233,7 @@ socket.on("uebung_gestoppt", () => {
         badge.classList.add("inaktiv");
         badge.innerText = "Keine aktive Übung";
     }
+    reloadDashboard(null);
 });
 
 /* =========================================================
@@ -273,6 +343,10 @@ function saveDetails() {
     const getStatus = document.getElementById("detailStatus");
     const getAkku   = document.getElementById("detailAkku");
 
+    const akkuWert = parseFloat(getAkku?.value);
+    const akkuFinal = isNaN(akkuWert) ? null : Math.min(100, Math.max(0, akkuWert));
+    if (getAkku && akkuFinal !== null) getAkku.value = akkuFinal;
+
     fetch(`/device/${activeDeviceId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -280,7 +354,7 @@ function saveDetails() {
             name:        getName?.value,
             mac_adresse: getMcu?.value,
             status:      getStatus?.value,
-            akku:        parseFloat(getAkku?.value) || null
+            akku:        akkuFinal
         })
     }).then(r => {
         if (r.ok) {
@@ -532,13 +606,18 @@ function submitAddDevice() {
         return;
     }
 
+    const akkuInput = document.getElementById("addAkku");
+    const akkuRaw   = parseFloat(akkuInput.value);
+    const akkuFinal = isNaN(akkuRaw) ? 100.0 : Math.min(100, Math.max(0, akkuRaw));
+    akkuInput.value = akkuFinal;
+
     if (isDbModus) {
         // DB-Modus: bestehendes Gerät aktualisieren und zur Übung hinzufügen
         const payload = {
             name:        name,
             mac_adresse: document.getElementById("addMcu").value.trim() || null,
             status:      document.getElementById("addStatus").value,
-            akku:        parseFloat(document.getElementById("addAkku").value) || null,
+            akku:        akkuFinal,
         };
         if (typ === "messgeraet") {
             payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
@@ -581,7 +660,7 @@ function submitAddDevice() {
             typ:         typ,
             mac_adresse: document.getElementById("addMcu").value.trim() || null,
             status:      document.getElementById("addStatus").value,
-            akku:        parseFloat(document.getElementById("addAkku").value) || 100.0,
+            akku:        akkuFinal,
         };
         if (typ === "messgeraet") {
             payload.gesamtdosis = parseFloat(document.getElementById("addGesamtdosis").value) || 0.0;
@@ -774,12 +853,13 @@ function openUebungDetail(id) {
         .then(r => r.json())
         .then(u => {
             aktiveUebungDetailId = id;
+            const readonly = u.status === "abgeschlossen";
 
             document.getElementById("udTitel").innerText = u.name;
 
             const badge = document.getElementById("udStatusBadge");
-            badge.innerText   = u.status;
-            badge.className   = "uebung-status-badge " + u.status;
+            badge.innerText = u.status;
+            badge.className = "uebung-status-badge " + u.status;
 
             document.getElementById("udStart").innerText = u.start_zeit
                 ? new Date(u.start_zeit).toLocaleString("de-DE") : "—";
@@ -793,24 +873,45 @@ function openUebungDetail(id) {
             document.getElementById("udAnzahlMessgeraete").innerText = messgeraete.length;
             document.getElementById("udAnzahlQuellen").innerText     = quellen.length;
 
-            renderUdGeraeteListe("udMessgeraeteListe", messgeraete);
-            renderUdGeraeteListe("udQuellenListe",     quellen);
+            renderUdGeraeteListe("udMessgeraeteListe", messgeraete, readonly);
+            renderUdGeraeteListe("udQuellenListe",     quellen,     readonly);
+
+            // Readonly-Banner
+            const banner = document.getElementById("udReadonlyBanner");
+            if (banner) banner.style.display = readonly ? "flex" : "none";
+
+            // Hinzufügen-Buttons
+            const btnM = document.getElementById("udBtnAddMessgeraet");
+            const btnQ = document.getElementById("udBtnAddQuelle");
+            if (btnM) btnM.style.display = readonly ? "none" : "";
+            if (btnQ) btnQ.style.display = readonly ? "none" : "";
+
+            // Gefahrenzone
+            const gz = document.getElementById("udGefahrenzone");
+            if (gz) gz.style.display = readonly ? "none" : "";
 
             // Aktions-Buttons
             const aktionenDiv = document.getElementById("udAktionenHeader");
             aktionenDiv.innerHTML = "";
 
-            if (u.status !== "aktiv") {
+            if (readonly) {
+                // Nur reaktivieren erlaubt
                 const btnAktiv = document.createElement("button");
-                btnAktiv.className   = "btn btn-login";
-                btnAktiv.innerText   = "▶ Aktivieren";
-                btnAktiv.onclick     = () => uebungAktivieren(id);
+                btnAktiv.className = "btn btn-login";
+                btnAktiv.innerText = "▶ Reaktivieren";
+                btnAktiv.onclick   = () => uebungAktivieren(id);
                 aktionenDiv.appendChild(btnAktiv);
-            } else {
+            } else if (u.status === "vorbereitung") {
+                const btnAktiv = document.createElement("button");
+                btnAktiv.className = "btn btn-login";
+                btnAktiv.innerText = "▶ Aktivieren";
+                btnAktiv.onclick   = () => uebungAktivieren(id);
+                aktionenDiv.appendChild(btnAktiv);
+            } else if (u.status === "aktiv") {
                 const btnStop = document.createElement("button");
-                btnStop.className  = "btn btn-logout";
-                btnStop.innerText  = "■ Beenden";
-                btnStop.onclick    = () => uebungBeenden(id);
+                btnStop.className = "btn btn-logout";
+                btnStop.innerText = "■ Beenden";
+                btnStop.onclick   = () => uebungBeenden(id);
                 aktionenDiv.appendChild(btnStop);
             }
 
@@ -818,7 +919,7 @@ function openUebungDetail(id) {
         });
 }
 
-function renderUdGeraeteListe(containerId, geraete) {
+function renderUdGeraeteListe(containerId, geraete, readonly = false) {
     const el = document.getElementById(containerId);
     if (!geraete.length) {
         el.innerHTML = '<span class="ud-empty">Keine Geräte zugeordnet</span>';
@@ -829,8 +930,8 @@ function renderUdGeraeteListe(containerId, geraete) {
             <span class="ud-geraet-name">${g.name}</span>
             <span class="ud-geraet-mac">${g.mac_adresse || "—"}</span>
             <span class="ud-geraet-status ${g.status || 'inaktiv'}">${g.status || "—"}</span>
-            <button class="ud-geraet-remove" title="Aus Übung entfernen"
-                    onclick="udGeraetEntfernen(${g.id}, event)">✕</button>
+            ${readonly ? "" : `<button class="ud-geraet-remove" title="Aus Übung entfernen"
+                    onclick="udGeraetEntfernen(${g.id}, event)">✕</button>`}
         </div>`).join("");
 }
 
@@ -959,3 +1060,260 @@ document.addEventListener("DOMContentLoaded", function() {
         if (e.key === "Escape") { closeNeueUebung(); closeUebungDetail(); }
     });
 });
+
+/* =========================================================
+   LIVE-MESSUNG / DIAGRAMME
+========================================================= */
+
+// Farbpalette für mehrere Geräte
+const CHART_COLORS = [
+    "#3498db","#e74c3c","#2ecc71","#f39c12","#9b59b6",
+    "#1abc9c","#e67e22","#34495e","#e91e63","#00bcd4"
+];
+
+let chartCpsVerlauf  = null;
+let chartDosisVerlauf = null;
+let chartCpsBar      = null;
+let chartDosisBar    = null;
+
+function initCharts() {
+    const defaults = {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }
+    };
+
+    chartCpsVerlauf = new Chart(document.getElementById("chartCpsVerlauf"), {
+        type: "line",
+        data: { labels: [], datasets: [] },
+        options: { ...defaults,
+            scales: {
+                x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+                y: { beginAtZero: true, title: { display: true, text: "mSv/h", font: { size: 11 } } }
+            }
+        }
+    });
+
+    chartDosisVerlauf = new Chart(document.getElementById("chartDosisVerlauf"), {
+        type: "line",
+        data: { labels: [], datasets: [] },
+        options: { ...defaults,
+            scales: {
+                x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+                y: { beginAtZero: true, title: { display: true, text: "mSv", font: { size: 11 } } }
+            }
+        }
+    });
+
+    chartCpsBar = new Chart(document.getElementById("chartCpsBar"), {
+        type: "bar",
+        data: { labels: [], datasets: [{ label: "Aktuelle Dosisrate (mSv/h)", data: [], backgroundColor: [] }] },
+        options: { ...defaults,
+            plugins: { ...defaults.plugins, legend: { display: false } },
+            scales: {
+                x: { ticks: { font: { size: 10 } } },
+                y: { beginAtZero: true, title: { display: true, text: "mSv/h", font: { size: 11 } } }
+            }
+        }
+    });
+
+    chartDosisBar = new Chart(document.getElementById("chartDosisBar"), {
+        type: "bar",
+        data: { labels: [], datasets: [{ label: "Gesamtdosis (mSv)", data: [], backgroundColor: [] }] },
+        options: { ...defaults,
+            plugins: { ...defaults.plugins, legend: { display: false } },
+            scales: {
+                x: { ticks: { font: { size: 10 } } },
+                y: { beginAtZero: true, title: { display: true, text: "mSv", font: { size: 11 } } }
+            }
+        }
+    });
+}
+
+function ladeLiveUebungen() {
+    fetch("/uebungen/liste")
+        .then(r => r.json())
+        .then(uebungen => {
+            const sel = document.getElementById("liveUebungSelect");
+            sel.innerHTML = "";
+
+            // Aktive zuerst
+            const sortiert = [...uebungen].sort((a, b) => {
+                const ord = { aktiv: 0, vorbereitung: 1, abgeschlossen: 2 };
+                return (ord[a.status] ?? 3) - (ord[b.status] ?? 3);
+            });
+
+            sortiert.forEach(u => {
+                const opt = document.createElement("option");
+                opt.value = u.id;
+                const icon = u.status === "aktiv" ? "●" : u.status === "vorbereitung" ? "◐" : "○";
+                opt.innerText = `${icon} ${u.name}`;
+                sel.appendChild(opt);
+            });
+
+            onLiveUebungChange();
+        });
+}
+
+function onLiveUebungChange() {
+    const uebungId = document.getElementById("liveUebungSelect").value;
+    if (!uebungId) return;
+
+    // Geräte-Dropdown befüllen
+    fetch(`/uebung/${uebungId}`)
+        .then(r => r.json())
+        .then(u => {
+            const sel = document.getElementById("liveGeraetSelect");
+            sel.innerHTML = '<option value="">Alle Messgeräte</option>';
+            u.geraete
+                .filter(g => g.typ === "messgeraet")
+                .forEach(g => {
+                    const opt = document.createElement("option");
+                    opt.value = g.id;
+                    opt.innerText = g.name;
+                    sel.appendChild(opt);
+                });
+            ladeCharts();
+        });
+}
+
+function ladeCharts() {
+    const uebungId = document.getElementById("liveUebungSelect").value;
+    const geraetId = document.getElementById("liveGeraetSelect").value;
+    const limit    = document.getElementById("liveLimitSelect").value;
+
+    if (!uebungId) return;
+
+    let url = `/measurements/history?uebung_id=${uebungId}&limit=${limit}`;
+    if (geraetId) url += `&geraet_id=${geraetId}`;
+
+    fetch(url)
+        .then(r => r.json())
+        .then(daten => {
+            const hint = document.getElementById("liveEmptyHint");
+            if (!daten.length) {
+                hint.style.display = "block";
+                document.querySelector(".live-charts-grid").style.display = "none";
+                document.getElementById("liveStatCards").innerHTML = "";
+                return;
+            }
+            hint.style.display = "none";
+            document.querySelector(".live-charts-grid").style.display = "grid";
+
+            // Daten nach Gerät gruppieren
+            const geraeteMap = {};
+            daten.forEach(m => {
+                if (!geraeteMap[m.geraet_id]) {
+                    geraeteMap[m.geraet_id] = { name: m.geraet_name, cps: [], dosis: [], timestamps: [] };
+                }
+                geraeteMap[m.geraet_id].cps.push(m.cps);
+                geraeteMap[m.geraet_id].dosis.push(m.dosis);
+                geraeteMap[m.geraet_id].timestamps.push(
+                    new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+                );
+            });
+
+            const geraeteIds  = Object.keys(geraeteMap);
+            const geraeteList = geraeteIds.map((id, i) => ({ id, ...geraeteMap[id], color: CHART_COLORS[i % CHART_COLORS.length] }));
+
+            // Gemeinsame Zeitachse (alle Timestamps sammeln und deduplizieren)
+            const alleTimestamps = [...new Set(daten.map(m =>
+                new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+            ))];
+
+            // Verlaufs-Diagramme (Linien)
+            updateVerlaufChart(chartCpsVerlauf,   geraeteList, "cps",   alleTimestamps);
+            updateVerlaufChart(chartDosisVerlauf, geraeteList, "dosis", alleTimestamps);
+
+            // Untertitel
+            document.getElementById("liveCpsSubtitle").innerText  = `${daten.length} Messpunkte`;
+            document.getElementById("liveDosisSubtitle").innerText = `${geraeteList.length} Gerät${geraeteList.length !== 1 ? "e" : ""}`;
+
+            // Balken-Diagramme (letzter Wert je Gerät)
+            const barLabels = geraeteList.map(g => kuerze(g.name, 14));
+            const barColors = geraeteList.map(g => g.color);
+
+            chartCpsBar.data.labels                    = barLabels;
+            chartCpsBar.data.datasets[0].data           = geraeteList.map(g => g.cps.at(-1)   ?? 0);
+            chartCpsBar.data.datasets[0].backgroundColor = barColors;
+            chartCpsBar.update();
+
+            chartDosisBar.data.labels                    = barLabels;
+            chartDosisBar.data.datasets[0].data           = geraeteList.map(g => g.dosis.at(-1) ?? 0);
+            chartDosisBar.data.datasets[0].backgroundColor = barColors;
+            chartDosisBar.update();
+
+            // Stat-Kacheln
+            renderStatCards(geraeteList);
+        });
+}
+
+function updateVerlaufChart(chart, geraeteList, feld, labels) {
+    chart.data.labels   = labels;
+    chart.data.datasets = geraeteList.map(g => ({
+        label:           g.name,
+        data:            g[feld],
+        borderColor:     g.color,
+        backgroundColor: g.color + "22",
+        borderWidth:     2,
+        pointRadius:     geraeteList[0][feld].length > 60 ? 0 : 3,
+        tension:         0.3,
+        fill:            false
+    }));
+    chart.update();
+}
+
+function renderStatCards(geraeteList) {
+    const container = document.getElementById("liveStatCards");
+
+    // Gesamt-Statistiken
+    const alleDosiswerte = geraeteList.flatMap(g => g.dosis);
+    const alleCpswerte   = geraeteList.flatMap(g => g.cps);
+    const maxDosis  = Math.max(...alleDosiswerte).toFixed(1);
+    const maxCps    = Math.max(...alleCpswerte).toFixed(2);
+    const avgDosis  = (alleDosiswerte.reduce((a, b) => a + b, 0) / alleDosiswerte.length).toFixed(1);
+
+    container.innerHTML = `
+        <div class="live-stat-card">
+            <span class="live-stat-label">Geräte</span>
+            <span class="live-stat-value">${geraeteList.length}</span>
+            <span class="live-stat-sub">Messgeräte mit Daten</span>
+        </div>
+        <div class="live-stat-card">
+            <span class="live-stat-label">Max. Dosisrate</span>
+            <span class="live-stat-value">${maxCps}</span>
+            <span class="live-stat-sub">mSv/h (Spitzenwert)</span>
+        </div>
+        <div class="live-stat-card">
+            <span class="live-stat-label">Max. Gesamtdosis</span>
+            <span class="live-stat-value">${maxDosis}</span>
+            <span class="live-stat-sub">mSv (höchstes Gerät)</span>
+        </div>
+        <div class="live-stat-card">
+            <span class="live-stat-label">Ø Gesamtdosis</span>
+            <span class="live-stat-value">${avgDosis}</span>
+            <span class="live-stat-sub">mSv (alle Geräte)</span>
+        </div>
+        ${geraeteList.map(g => `
+        <div class="live-stat-card">
+            <span class="live-stat-label" style="color:${g.color}">${kuerze(g.name, 18)}</span>
+            <span class="live-stat-value">${(g.cps.at(-1) ?? 0).toFixed(2)}</span>
+            <span class="live-stat-sub">mSv/h aktuell · ${(g.dosis.at(-1) ?? 0).toFixed(1)} mSv gesamt</span>
+        </div>`).join("")}
+    `;
+}
+
+function kuerze(str, max) {
+    return str.length > max ? str.slice(0, max - 1) + "…" : str;
+}
+
+// Tab-Switch-Hook: Charts beim ersten Öffnen initialisieren
+const _origSwitchTab = switchTab;
+function switchTab(tab) {
+    _origSwitchTab(tab);
+    if (tab === "live") {
+        if (!chartCpsVerlauf) initCharts();
+        ladeLiveUebungen();
+    }
+}

@@ -141,6 +141,74 @@ def update_device(geraet_id):
     socketio.emit("device_updated", aktualisiert)
     return jsonify(aktualisiert), 200
 
+@app.route("/measurements/history")
+def measurements_history():
+    """Messverlauf für alle Geräte einer Übung (oder aktiver Übung)"""
+    uebung_id = request.args.get("uebung_id", type=int)
+    geraet_id = request.args.get("geraet_id", type=int)
+    limit     = request.args.get("limit", 100, type=int)
+
+    db = get_db()
+
+    # Übung bestimmen
+    if not uebung_id:
+        u = db.execute("SELECT id FROM uebungen WHERE status = 'aktiv' LIMIT 1").fetchone()
+        uebung_id = u["id"] if u else None
+
+    if not uebung_id:
+        return jsonify([])
+
+    if geraet_id:
+        rows = db.execute("""
+            SELECT m.timestamp, m.cps, m.dosis, m.geraet_id, g.name AS geraet_name
+            FROM messungen m
+            JOIN geraete g ON g.id = m.geraet_id
+            WHERE m.uebung_id = ? AND m.geraet_id = ?
+            ORDER BY m.timestamp ASC
+            LIMIT ?
+        """, (uebung_id, geraet_id, limit)).fetchall()
+    else:
+        rows = db.execute("""
+            SELECT m.timestamp, m.cps, m.dosis, m.geraet_id, g.name AS geraet_name
+            FROM messungen m
+            JOIN geraete g ON g.id = m.geraet_id
+            WHERE m.uebung_id = ?
+            ORDER BY m.timestamp ASC
+            LIMIT ?
+        """, (uebung_id, limit)).fetchall()
+
+    return jsonify([dict(r) for r in rows])
+
+@app.route("/uebungen/liste")
+def uebungen_liste():
+    """Alle Übungen mit Messgeräten für Diagramm-Auswahl"""
+    db = get_db()
+    uebungen = db.execute("SELECT id, name, status FROM uebungen ORDER BY erstellt_am DESC").fetchall()
+    result = []
+    for u in uebungen:
+        u = dict(u)
+        geraete = db.execute(
+            "SELECT id, name FROM geraete WHERE uebung_id = ? AND typ = 'messgeraet'", (u["id"],)
+        ).fetchall()
+        u["geraete"] = [dict(g) for g in geraete]
+        result.append(u)
+    return jsonify(result)
+
+@app.route("/measurements/latest")
+def measurements_latest():
+    """Gibt den letzten Messwert pro Gerät zurück"""
+    db = get_db()
+    rows = db.execute("""
+        SELECT m.geraet_id AS id, m.cps, m.dosis AS gesamtdosis
+        FROM messungen m
+        INNER JOIN (
+            SELECT geraet_id, MAX(timestamp) AS max_ts
+            FROM messungen
+            GROUP BY geraet_id
+        ) latest ON m.geraet_id = latest.geraet_id AND m.timestamp = latest.max_ts
+    """).fetchall()
+    return jsonify([dict(r) for r in rows])
+
 @app.route("/devices/ohne_uebung")
 @login_required
 def devices_ohne_uebung():
