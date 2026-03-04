@@ -116,6 +116,15 @@ def on_message(client, userdata, msg):
                VALUES (?, ?, ?, ?, ?)""",
             (geraet_id, uebung_id, cps, dosis, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         )
+
+        # gesamtdosis + letzter_kontakt in geraete immer aktualisieren
+        # (Watcher liest gesamtdosis aus geraete-Tabelle für die Karten-Anzeige)
+        c.execute(
+            """UPDATE geraete
+               SET gesamtdosis = ?, letzter_kontakt = CURRENT_TIMESTAMP
+               WHERE id = ?""",
+            (dosis, geraet_id)
+        )
         conn.commit()
 
         # ── Aktuelle Gesamtdosis aus DB lesen (nach Update) ─────────

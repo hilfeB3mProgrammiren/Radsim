@@ -11,8 +11,10 @@ init_db()
 
 app = Flask(__name__, template_folder="../frontend/templates", static_folder="../frontend/static")
 app.secret_key = "super-secret-key"
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+app.config["SESSION_COOKIE_SECURE"]   = False  # kein HTTPS nötig im LAN
 
-socketio = SocketIO(app, async_mode="eventlet")
+socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
 
 login_manager = LoginManager()
 login_manager.login_view = "auth.login"
@@ -31,20 +33,21 @@ def on_connect():
     """Wenn ein Browser sich verbindet, aktuelle Messwerte sofort schicken"""
     db = get_db()
     messungen = db.execute("""
-        SELECT m.id, m.geraet_id, m.cps, m.dosis
+        SELECT m.id, m.geraet_id, m.cps, m.dosis, g.gesamtdosis
         FROM messungen m
+        JOIN geraete g ON g.id = m.geraet_id
         INNER JOIN (
-            SELECT geraet_id, MAX(timestamp) as max_ts
+            SELECT geraet_id, MAX(id) as max_id
             FROM messungen
             GROUP BY geraet_id
-        ) latest ON m.geraet_id = latest.geraet_id AND m.timestamp = latest.max_ts
+        ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
     """).fetchall()
 
     for m in messungen:
         emit("measurement", {
             "id":          m["geraet_id"],
             "cps":         m["cps"],
-            "gesamtdosis": m["dosis"]
+            "gesamtdosis": m["gesamtdosis"]
         })
 
 # --------------------
@@ -57,26 +60,29 @@ def messdaten_watcher():
     while True:
         try:
             db = get_db()
-            messungen = db.execute("""
-                SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp
+
+            # Nur den jeweils neuesten Eintrag pro Gerät holen – kein full table scan
+            neueste = db.execute("""
+                SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
+                       g.gesamtdosis
                 FROM messungen m
-                ORDER BY m.timestamp DESC
+                JOIN geraete g ON g.id = m.geraet_id
+                INNER JOIN (
+                    SELECT geraet_id, MAX(id) as max_id
+                    FROM messungen
+                    GROUP BY geraet_id
+                ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
             """).fetchall()
 
-            gesehen = set()
-            for m in messungen:
+            for m in neueste:
                 gid = m["geraet_id"]
-                if gid in gesehen:
-                    continue
-                gesehen.add(gid)
 
-                # Nur senden wenn sich der Wert geändert hat
                 if letzte_ids.get(gid) != m["id"]:
                     letzte_ids[gid] = m["id"]
                     socketio.emit("measurement", {
                         "id":          gid,
                         "cps":         m["cps"],
-                        "gesamtdosis": m["dosis"],
+                        "gesamtdosis": m["gesamtdosis"],  # aus geraete-Tabelle, nicht messungen
                         "timestamp":   str(m["timestamp"])
                     })
 
@@ -380,4 +386,4 @@ if __name__ == "__main__":
     socketio.start_background_task(messdaten_watcher)
     print("Messdaten-Watcher gestartet")
 
-    socketio.run(app, host="0.0.0.0", port=5000, debug=True)
+    socketio.run(app, host="0.0.0.0", port=5000, debug=False)
