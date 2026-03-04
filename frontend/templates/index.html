@@ -6,6 +6,7 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://cdn.socket.io/4.0.0/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 </head>
 
 <body>
@@ -192,6 +193,7 @@
             </select>
         </div>
         <button class="btn btn-login live-refresh-btn" onclick="ladeCharts()">↺ Aktualisieren</button>
+        <button class="btn live-pdf-btn" onclick="exportPDF()">⬇ PDF Export</button>
     </div>
 </div>
 

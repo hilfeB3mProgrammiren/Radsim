@@ -794,6 +794,10 @@ function switchTab(tab) {
         if (link) link.classList.toggle("tab-active", t === tab);
     });
     if (tab === "uebungen") ladeUebungen();
+    if (tab === "live") {
+        if (!chartCpsVerlauf) initCharts();
+        ladeLiveUebungen();
+    }
 }
 
 /* =========================================================
@@ -1308,12 +1312,317 @@ function kuerze(str, max) {
     return str.length > max ? str.slice(0, max - 1) + "…" : str;
 }
 
-// Tab-Switch-Hook: Charts beim ersten Öffnen initialisieren
-const _origSwitchTab = switchTab;
-function switchTab(tab) {
-    _origSwitchTab(tab);
-    if (tab === "live") {
-        if (!chartCpsVerlauf) initCharts();
-        ladeLiveUebungen();
+
+
+/* =========================================================
+   PDF EXPORT
+========================================================= */
+
+async function exportPDF() {
+    const btn = document.querySelector(".live-pdf-btn");
+    btn.disabled  = true;
+    btn.innerText = "Erstelle PDF...";
+
+    try {
+        const { jsPDF } = window.jspdf;
+
+        const PW = 297;   // A4 landscape width mm
+        const PH = 210;   // A4 landscape height mm
+        const M  = 14;    // Seitenrand mm
+        const ACCENT = [192, 57, 43];   // Rot
+        const DARK   = [22, 22, 22];
+        const LIGHT  = [248, 249, 250];
+
+        // Hilfsfunktion: sicherer ASCII-Text (jsPDF hat Probleme mit manchen Unicode-Zeichen)
+        const safe = str => (str || "").replace(/[●◐○☢📡↺⬇⏳]/g, "").trim();
+
+        // Metadaten
+        const uebungRaw  = document.getElementById("liveUebungSelect").selectedOptions[0]?.text || "—";
+        const geraetRaw  = document.getElementById("liveGeraetSelect").selectedOptions[0]?.text || "Alle Messgeraete";
+        const uebungName = safe(uebungRaw);
+        const geraetName = safe(geraetRaw);
+        const now        = new Date().toLocaleString("de-DE");
+
+        // ── Hilfsfunktionen Layout ────────────────────────────────────
+
+        function fusszeile(pdf, seite) {
+            pdf.setFillColor(235, 235, 235);
+            pdf.rect(0, PH - 8, PW, 8, "F");
+            pdf.setFontSize(7.5);
+            pdf.setFont("helvetica", "normal");
+            pdf.setTextColor(160, 160, 160);
+            pdf.text("Radsim - Strahlungsuebungs-Dashboard", M, PH - 2.5);
+            pdf.text(`Seite ${seite}`, PW - M, PH - 2.5, { align: "right" });
+        }
+
+        function akzentStreifen(pdf) {
+            pdf.setFillColor(...ACCENT);
+            pdf.rect(0, 0, 5, PH, "F");
+        }
+
+        function chartAlsPng(canvasId) {
+            const canvas = document.getElementById(canvasId);
+            if (!canvas) return null;
+            const isBar = canvasId.includes("Bar");
+
+            // Wrapper temporär auf große feste Größe setzen
+            const wrap = canvas.parentElement;
+            const oldW  = wrap.style.width;
+            const oldH  = wrap.style.height;
+            const oldPH = wrap.style.paddingBottom;
+
+            wrap.style.width  = "1800px";
+            wrap.style.height = isBar ? "700px" : "600px";
+
+            // Chart-Labels für Balken: volle Namen, rotiert
+            const chartObj = { chartCpsBar: chartCpsBar, chartDosisBar: chartDosisBar }[canvasId];
+            let oldMaxRot, oldMinRot, oldCb;
+            if (isBar && chartObj) {
+                const xScale = chartObj.options.scales.x;
+                oldMaxRot = xScale.ticks?.maxRotation;
+                oldMinRot = xScale.ticks?.minRotation;
+                oldCb     = xScale.ticks?.callback;
+                if (!xScale.ticks) xScale.ticks = {};
+                xScale.ticks.maxRotation = 40;
+                xScale.ticks.minRotation = 40;
+                // Volle Labels ohne kuerze()
+                const fullLabels = chartObj.data.labels;
+                xScale.ticks.callback = function(val) { return fullLabels[val] || val; };
+                chartObj.resize();
+                chartObj.update("none");
+            }
+
+            // Chart resizen auf neue Containergröße
+            const anyChart = [chartCpsVerlauf, chartDosisVerlauf, chartCpsBar, chartDosisBar]
+                .find(c => c && c.canvas.id === canvasId);
+            if (anyChart) {
+                anyChart.resize();
+                anyChart.update("none");
+            }
+
+            // Auf weißem Hintergrund kopieren
+            const tmp = document.createElement("canvas");
+            tmp.width  = canvas.width;
+            tmp.height = canvas.height;
+            const ctx  = tmp.getContext("2d");
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, tmp.width, tmp.height);
+            ctx.drawImage(canvas, 0, 0);
+            const imgData = tmp.toDataURL("image/png", 1.0);
+
+            // Alles zurücksetzen
+            wrap.style.width  = oldW;
+            wrap.style.height = oldH;
+            wrap.style.paddingBottom = oldPH;
+            if (isBar && chartObj) {
+                const xScale = chartObj.options.scales.x;
+                xScale.ticks.maxRotation = oldMaxRot;
+                xScale.ticks.minRotation = oldMinRot;
+                xScale.ticks.callback    = oldCb;
+            }
+            if (anyChart) {
+                anyChart.resize();
+                anyChart.update("none");
+            }
+
+            return imgData;
+        }
+
+        // ── Seite 1: Deckblatt ────────────────────────────────────────
+        const pdf = new jsPDF({ orientation: "landscape", unit: "mm", format: "a4" });
+
+        // Hintergrund dunkel
+        pdf.setFillColor(...DARK);
+        pdf.rect(0, 0, PW, PH, "F");
+        akzentStreifen(pdf);
+
+        // Titel
+        pdf.setFont("helvetica", "bold");
+        pdf.setFontSize(32);
+        pdf.setTextColor(255, 255, 255);
+        pdf.text("Strahlungsverlauf", M + 8, 52);
+
+        // Untertitel-Linie
+        pdf.setDrawColor(...ACCENT);
+        pdf.setLineWidth(0.8);
+        pdf.line(M + 8, 56, M + 8 + 80, 56);
+
+        // Meta-Infos
+        pdf.setFont("helvetica", "normal");
+        pdf.setFontSize(11);
+        pdf.setTextColor(170, 170, 170);
+        pdf.text("Ubung:", M + 8, 68);
+        pdf.text("Gerat:", M + 8, 78);
+        pdf.text("Erstellt:", M + 8, 88);
+
+        pdf.setTextColor(220, 220, 220);
+        pdf.setFont("helvetica", "bold");
+        pdf.text(uebungName, M + 35, 68);
+        pdf.text(geraetName, M + 35, 78);
+        pdf.setFont("helvetica", "normal");
+        pdf.text(now, M + 35, 88);
+
+        // Stat-Kacheln
+        const stats = document.querySelectorAll(".live-stat-card");
+        if (stats.length) {
+            const boxY = 102;
+            const boxH = 82;
+            pdf.setFillColor(38, 38, 38);
+            pdf.roundedRect(M + 6, boxY, PW - M * 2 - 6, boxH, 3, 3, "F");
+
+            // Trennlinie oben im Box
+            pdf.setDrawColor(...ACCENT);
+            pdf.setLineWidth(0.4);
+            pdf.line(M + 6, boxY, M + 6 + 40, boxY);
+
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(7.5);
+            pdf.setTextColor(...ACCENT);
+            pdf.text("ZUSAMMENFASSUNG", M + 14, boxY + 8);
+
+            // Nur die ersten 4 fixen Kacheln (nicht die gerätespezifischen)
+            const fixStats = Array.from(stats).slice(0, 4);
+            const colW     = (PW - M * 2 - 28) / fixStats.length;
+
+            fixStats.forEach((card, i) => {
+                const label = safe(card.querySelector(".live-stat-label")?.innerText || "");
+                const val   = card.querySelector(".live-stat-value")?.innerText || "";
+                const sub   = safe(card.querySelector(".live-stat-sub")?.innerText || "");
+                const x     = M + 14 + i * colW;
+
+                // Trennlinie zwischen Spalten
+                if (i > 0) {
+                    pdf.setDrawColor(55, 55, 55);
+                    pdf.setLineWidth(0.3);
+                    pdf.line(x - 4, boxY + 14, x - 4, boxY + boxH - 8);
+                }
+
+                pdf.setFontSize(7.5);
+                pdf.setFont("helvetica", "normal");
+                pdf.setTextColor(120, 120, 120);
+                pdf.text(label.toUpperCase(), x, boxY + 18);
+
+                pdf.setFontSize(22);
+                pdf.setFont("helvetica", "bold");
+                pdf.setTextColor(255, 255, 255);
+                pdf.text(val, x, boxY + 38);
+
+                pdf.setFontSize(8);
+                pdf.setFont("helvetica", "normal");
+                pdf.setTextColor(100, 100, 100);
+                pdf.text(sub, x, boxY + 47, { maxWidth: colW - 6 });
+            });
+
+            // Gerätestatus-Zeile (wenn mehrere Geräte)
+            const geraetStats = Array.from(stats).slice(4);
+            if (geraetStats.length) {
+                const gy = boxY + boxH - 18;
+                pdf.setDrawColor(50, 50, 50);
+                pdf.setLineWidth(0.2);
+                pdf.line(M + 14, gy - 4, PW - M - 6, gy - 4);
+
+                pdf.setFontSize(7);
+                pdf.setFont("helvetica", "bold");
+                pdf.setTextColor(100, 100, 100);
+                pdf.text("GERAETE:", M + 14, gy + 2);
+
+                let gx = M + 38;
+                geraetStats.slice(0, 6).forEach(card => {
+                    const gname = safe(card.querySelector(".live-stat-label")?.innerText || "");
+                    const gval  = card.querySelector(".live-stat-value")?.innerText || "";
+                    pdf.setTextColor(160, 160, 160);
+                    pdf.setFont("helvetica", "normal");
+                    pdf.text(`${gname}: `, gx, gy + 2);
+                    pdf.setFont("helvetica", "bold");
+                    pdf.setTextColor(200, 200, 200);
+                    const labelW = pdf.getTextWidth(`${gname}: `);
+                    pdf.text(`${gval} mSv/h`, gx + labelW, gy + 2);
+                    gx += pdf.getTextWidth(`${gname}: ${gval} mSv/h`) + 10;
+                });
+            }
+        }
+
+        fusszeile(pdf, 1);
+
+        // ── Seiten 2–5: Je ein Diagramm ──────────────────────────────
+        const diagramme = [
+            { id: "chartCpsVerlauf",   titel: "Dosisrate - Verlauf",          einheit: "mSv/h", beschreibung: "Aktuelle Dosisrate aller Messgeraete im Zeitverlauf" },
+            { id: "chartDosisVerlauf", titel: "Gesamtdosis - Verlauf",        einheit: "mSv",   beschreibung: "Kumulierte Gesamtdosis aller Messgeraete im Zeitverlauf" },
+            { id: "chartCpsBar",       titel: "Dosisrate - Geraetevergleich", einheit: "mSv/h", beschreibung: "Aktueller Dosisratenwert je Geraet (letzter Messpunkt)" },
+            { id: "chartDosisBar",     titel: "Gesamtdosis - Geraetevergleich", einheit: "mSv", beschreibung: "Gesamtdosis je Geraet (letzter Messpunkt)" },
+        ];
+
+        for (let di = 0; di < diagramme.length; di++) {
+            const { id, titel, einheit, beschreibung } = diagramme[di];
+            const imgData = chartAlsPng(id);
+            if (!imgData) continue;
+
+            pdf.addPage("a4", "landscape");
+
+            // Hintergrund hell
+            pdf.setFillColor(...LIGHT);
+            pdf.rect(0, 0, PW, PH, "F");
+            // Weißer Inhaltsbereich
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(5, 0, PW - 5, PH - 8, "F");
+            akzentStreifen(pdf);
+
+            // ── Header-Block ──
+            const headerH = 26;
+            pdf.setFillColor(255, 255, 255);
+            pdf.rect(5, 0, PW - 5, headerH, "F");
+
+            // Roter Akzent-Streifen oben
+            pdf.setFillColor(...ACCENT);
+            pdf.rect(5, 0, PW - 5, 2, "F");
+
+            // Titel links
+            pdf.setFont("helvetica", "bold");
+            pdf.setFontSize(14);
+            pdf.setTextColor(25, 25, 25);
+            pdf.text(titel, M + 2, 12);
+
+            // Einheit-Badge rechts
+            const badgeW = pdf.getTextWidth(`  ${einheit}  `) + 2;
+            pdf.setFillColor(...ACCENT);
+            pdf.roundedRect(PW - M - badgeW, 4, badgeW, 9, 2, 2, "F");
+            pdf.setFontSize(8);
+            pdf.setFont("helvetica", "bold");
+            pdf.setTextColor(255, 255, 255);
+            pdf.text(einheit, PW - M - badgeW / 2, 10, { align: "center" });
+
+            // Meta-Zeile: Übung · Gerät · Datum
+            pdf.setFont("helvetica", "normal");
+            pdf.setFontSize(8);
+            pdf.setTextColor(130, 130, 130);
+            pdf.text(`${uebungName}  ·  ${geraetName}  ·  ${now}`, M + 2, 21);
+
+            // Trennlinie Header/Chart
+            pdf.setDrawColor(230, 230, 230);
+            pdf.setLineWidth(0.3);
+            pdf.line(5, headerH, PW, headerH);
+
+            // ── Meta-Zeile unter Header ──
+            const chartY = headerH + 3;
+            const chartH = PH - headerH - 12;
+            const chartW = PW - M * 2 - 2;
+
+            // Diagramm-Bild volle Breite
+            pdf.addImage(imgData, "PNG", M, chartY, chartW, chartH);
+
+            fusszeile(pdf, di + 2);
+        }
+
+        // ── Speichern ──────────────────────────────────────────────────
+        const dateiname = `Strahlungsverlauf_${uebungName.replace(/\s+/g, "_").replace(/[^a-zA-Z0-9_]/g, "")}_${
+            new Date().toISOString().slice(0, 10)}.pdf`;
+        pdf.save(dateiname);
+
+    } catch (err) {
+        console.error("PDF-Export Fehler:", err);
+        alert("PDF-Export fehlgeschlagen: " + err.message);
+    } finally {
+        btn.disabled  = false;
+        btn.innerText = "PDF Export";
     }
 }

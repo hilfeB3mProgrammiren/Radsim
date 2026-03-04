@@ -1364,3 +1364,25 @@ main {
     color: #aaa;
     font-size: 14px;
 }
+
+/* =========================================================
+   PDF EXPORT BUTTON
+========================================================= */
+
+.live-pdf-btn {
+    height: 34px;
+    padding: 0 14px;
+    align-self: flex-end;
+    background-color: #c0392b;
+    color: #fff;
+    font-weight: 500;
+}
+
+.live-pdf-btn:hover {
+    background-color: #e74c3c;
+}
+
+.live-pdf-btn:disabled {
+    background-color: #888;
+    cursor: wait;
+}
