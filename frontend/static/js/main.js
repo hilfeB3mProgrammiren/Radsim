@@ -1,4 +1,17 @@
+/* =========================================================
+   GLOBALE VARIABLEN
+========================================================= */
 const socket = io();
+
+let addDeviceUebungKontext = null;
+let dbGeraeteCache         = [];
+let uebungenCache          = [];
+let aktiveUebungDetailId   = null;
+
+let chartCpsVerlauf   = null;
+let chartDosisVerlauf = null;
+let chartCpsBar       = null;
+let chartDosisBar     = null;
 
 /* =========================================================
    HILFSFUNKTIONEN
@@ -485,7 +498,6 @@ socket.on("device_deleted", data => {
 ========================================================= */
 
 // Zwischenspeicher für DB-Geräte
-let dbGeraeteCache = [];
 
 function openAddDevice(typ) {
     // Felder zurücksetzen
@@ -543,9 +555,12 @@ function setAddMode(modus) {
     }
 
     if (isDb) {
-        // DB-Geräte laden
-        fetch(`/devices/ohne_uebung?typ=${typ}`)
-            .then(r => r.json())
+        const uebungParam = addDeviceUebungKontext ? `&uebung_id=${addDeviceUebungKontext}` : "";
+        fetch(`/devices/ohne_uebung?typ=${typ}${uebungParam}`)
+            .then(r => {
+                if (!r.ok) throw new Error(`Server antwortete mit ${r.status} – bitte einloggen`);
+                return r.json();
+            })
             .then(geraete => {
                 dbGeraeteCache = geraete;
                 const sel = document.getElementById("dbGeraetSelect");
@@ -553,16 +568,21 @@ function setAddMode(modus) {
                 geraete.forEach(g => {
                     const opt = document.createElement("option");
                     opt.value = g.id;
-                    opt.innerText = g.name + (g.mac_adresse ? ` (${g.mac_adresse})` : "");
+                    const uebungHinweis = g.uebung_id ? ` [Übung ${g.uebung_id}]` : "";
+                    opt.innerText = g.name + (g.mac_adresse ? ` (${g.mac_adresse})` : "") + uebungHinweis;
                     sel.appendChild(opt);
                 });
                 if (geraete.length === 0) {
                     document.getElementById("dbAuswahlHinweis").innerText =
-                        "Keine nicht zugeordneten Geräte dieses Typs in der Datenbank.";
+                        "Keine verfügbaren Geräte dieses Typs in der Datenbank.";
                 } else {
                     document.getElementById("dbAuswahlHinweis").innerText =
                         "Wähle ein Gerät – die Felder werden automatisch befüllt und können angepasst werden.";
                 }
+            })
+            .catch(err => {
+                console.error("Fehler beim Laden der DB-Geräte:", err);
+                document.getElementById("dbAuswahlHinweis").innerText = "Fehler: " + err.message;
             });
     }
 }
@@ -804,8 +824,7 @@ function switchTab(tab) {
    ÜBUNGEN LADEN & ANZEIGEN
 ========================================================= */
 
-let uebungenCache = [];
-let aktiveUebungDetailId = null;
+// aktiveUebungDetailId (oben deklariert)
 
 function ladeUebungen() {
     fetch("/uebungen")
@@ -1046,9 +1065,6 @@ function openAddDeviceForUebung(typ) {
     openAddDevice(typ);
 }
 
-// Überschreibe add_to_uebung um spezifische Übung zu nutzen
-let addDeviceUebungKontext = null;
-
 // Übungs-Detail nach new_device aktualisieren wird im originalen Handler erledigt
 // (addDeviceUebungKontext wird dort geprüft)
 
@@ -1075,10 +1091,6 @@ const CHART_COLORS = [
     "#1abc9c","#e67e22","#34495e","#e91e63","#00bcd4"
 ];
 
-let chartCpsVerlauf  = null;
-let chartDosisVerlauf = null;
-let chartCpsBar      = null;
-let chartDosisBar    = null;
 
 function initCharts() {
     const defaults = {

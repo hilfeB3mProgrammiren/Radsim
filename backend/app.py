@@ -1,3 +1,6 @@
+import eventlet
+eventlet.monkey_patch()
+
 import threading
 import time
 from flask import Flask, render_template, request, jsonify
@@ -53,16 +56,30 @@ def on_connect():
 # --------------------
 # Messdaten Watcher
 # --------------------
+# --------------------
+# Messdaten Watcher
+# --------------------
 def messdaten_watcher():
     """Läuft im Hintergrund, prüft jede Sekunde auf neue Messwerte"""
-    letzte_ids = {}  # { geraet_id: letzter bekannter messungs-id }
+    import sqlite3 as _sqlite3
+    import os
+
+    # DB-Pfad ermitteln – versucht DB_PATH aus database.py, sonst Fallback
+    try:
+        from database import DB_PATH
+    except ImportError:
+        DB_PATH = os.path.join(os.path.dirname(__file__), "radsim.db")
+
+    letzte_ids = {}
+    print(f"[Watcher] Background-Task gestartet – DB: {DB_PATH}")
 
     while True:
         try:
-            db = get_db()
+            # Eigene Verbindung – kein flask.g, kein Request-Context nötig
+            conn = _sqlite3.connect(DB_PATH)
+            conn.row_factory = _sqlite3.Row
 
-            # Nur den jeweils neuesten Eintrag pro Gerät holen – kein full table scan
-            neueste = db.execute("""
+            neueste = conn.execute("""
                 SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
                        g.gesamtdosis
                 FROM messungen m
@@ -73,23 +90,23 @@ def messdaten_watcher():
                     GROUP BY geraet_id
                 ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
             """).fetchall()
+            conn.close()
 
             for m in neueste:
                 gid = m["geraet_id"]
-
                 if letzte_ids.get(gid) != m["id"]:
                     letzte_ids[gid] = m["id"]
                     socketio.emit("measurement", {
                         "id":          gid,
                         "cps":         m["cps"],
-                        "gesamtdosis": m["gesamtdosis"],  # aus geraete-Tabelle, nicht messungen
+                        "gesamtdosis": m["gesamtdosis"],
                         "timestamp":   str(m["timestamp"])
                     })
 
         except Exception as e:
-            print("Watcher Fehler:", e)
+            print(f"[Watcher] Fehler: {e}")
 
-        time.sleep(1)
+        socketio.sleep(1)  # eventlet-freundliches sleep statt time.sleep
 
 # --------------------
 # Routes
@@ -218,16 +235,33 @@ def measurements_latest():
 @app.route("/devices/ohne_uebung")
 @login_required
 def devices_ohne_uebung():
-    typ = request.args.get("typ")
-    db = get_db()
-    if typ:
-        rows = db.execute(
-            "SELECT * FROM geraete WHERE uebung_id IS NULL AND typ = ?", (typ,)
-        ).fetchall()
+    typ       = request.args.get("typ")
+    uebung_id = request.args.get("uebung_id", type=int)
+    db        = get_db()
+
+    # Alle Geräte aus DB holen die NICHT bereits in der Ziel-Übung sind
+    if uebung_id:
+        if typ:
+            rows = db.execute(
+                "SELECT * FROM geraete WHERE (uebung_id IS NULL OR uebung_id != ?) AND typ = ?",
+                (uebung_id, typ)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM geraete WHERE (uebung_id IS NULL OR uebung_id != ?)",
+                (uebung_id,)
+            ).fetchall()
     else:
-        rows = db.execute(
-            "SELECT * FROM geraete WHERE uebung_id IS NULL"
-        ).fetchall()
+        # Fallback: alle ohne Übung
+        if typ:
+            rows = db.execute(
+                "SELECT * FROM geraete WHERE uebung_id IS NULL AND typ = ?", (typ,)
+            ).fetchall()
+        else:
+            rows = db.execute(
+                "SELECT * FROM geraete WHERE uebung_id IS NULL"
+            ).fetchall()
+
     return jsonify([dict(r) for r in rows])
 
 @app.route("/device/<int:geraet_id>/add_to_uebung", methods=["POST"])
@@ -385,5 +419,8 @@ def add_to_specific_uebung(geraet_id, uebung_id):
 if __name__ == "__main__":
     socketio.start_background_task(messdaten_watcher)
     print("Messdaten-Watcher gestartet")
-
+    print("=" * 45)
+    print("  Radsim läuft auf http://0.0.0.0:5000")
+    print("  Warte auf Verbindungen... (Ctrl+C zum Beenden)")
+    print("=" * 45)
     socketio.run(app, host="0.0.0.0", port=5000, debug=False)
