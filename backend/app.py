@@ -312,6 +312,106 @@ def reset_dosis(geraet_id):
 
 
 # --------------------
+# Offset-Steuerung für Messgeräte
+# --------------------
+
+@app.route("/device/<int:geraet_id>/offset", methods=["POST"])
+@login_required
+def set_offset(geraet_id):
+    """
+    Setzt Offset-Werte für ein Messgerät und sendet sie per MQTT.
+    Body: { "offset_alpha": 0.5, "offset_beta": 0.0, "offset_gamma": 1.2, "reset": false }
+    Die Offset-Werte nutzen dieselbe Einheit wie die Quellen-Stärken (mSv/h).
+    """
+    import json as _json
+    data = request.get_json()
+    if not data:
+        return jsonify({"error": "Kein JSON-Body"}), 400
+
+    offset_alpha = float(data.get("offset_alpha", 0.0))
+    offset_beta  = float(data.get("offset_beta",  0.0))
+    offset_gamma = float(data.get("offset_gamma", 0.0))
+    reset        = bool(data.get("reset", False))
+
+    db = get_db()
+    geraet = db.execute("SELECT * FROM geraete WHERE id = ?", (geraet_id,)).fetchone()
+    if not geraet:
+        return jsonify({"error": "Gerät nicht gefunden"}), 404
+    if geraet["typ"] != "messgeraet":
+        return jsonify({"error": "Gerät ist kein Messgerät"}), 400
+
+    mac = geraet["mac_adresse"]
+
+    # Werte in DB speichern
+    db.execute(
+        """UPDATE geraete
+           SET offset_alpha = ?, offset_beta = ?, offset_gamma = ?, offset_reset = ?
+           WHERE id = ?""",
+        (offset_alpha, offset_beta, offset_gamma, 1 if reset else 0, geraet_id)
+    )
+    db.commit()
+
+    # Per MQTT senden (wenn MAC bekannt und mqtt_backend läuft)
+    mqtt_ok = False
+    if mac:
+        try:
+            import paho.mqtt.publish as publish
+            payload = _json.dumps({
+                "offset_alpha": round(offset_alpha, 3),
+                "offset_beta":  round(offset_beta,  3),
+                "offset_gamma": round(offset_gamma, 3),
+                "reset":        reset,
+                "status":       geraet["status"] or "aktiv",
+            })
+            publish.single(
+                f"devices/cmd/{mac.upper()}",
+                payload,
+                hostname="localhost",
+                port=1883,
+                qos=1,
+            )
+            mqtt_ok = True
+        except Exception as e:
+            print(f"[OFFSET] MQTT-Fehler: {e}")
+
+    # Socket-Event damit die UI sofort aktualisiert wird
+    socketio.emit("device_updated", {
+        "id":           geraet_id,
+        "offset_alpha": offset_alpha,
+        "offset_beta":  offset_beta,
+        "offset_gamma": offset_gamma,
+        "offset_reset": 1 if reset else 0,
+    })
+
+    return jsonify({
+        "ok":      True,
+        "mac":     mac,
+        "mqtt_ok": mqtt_ok,
+        "sent": {
+            "offset_alpha": offset_alpha,
+            "offset_beta":  offset_beta,
+            "offset_gamma": offset_gamma,
+            "reset":        reset,
+        }
+    }), 200
+
+
+@app.route("/messgeraete/offsets")
+@login_required
+def get_messgeraete_offsets():
+    """Alle Messgeräte mit aktuellen Offset-Werten (für den Offset-Tab)."""
+    db = get_db()
+    rows = db.execute(
+        """SELECT id, name, mac_adresse, status, akku, letzter_kontakt,
+                  gesamtdosis, offset_alpha, offset_beta, offset_gamma, offset_reset
+           FROM geraete
+           WHERE typ = 'messgeraet'
+           ORDER BY name"""
+    ).fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+# --------------------
 # Übungen Routes
 # --------------------
 

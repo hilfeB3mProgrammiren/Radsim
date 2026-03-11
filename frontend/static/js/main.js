@@ -70,6 +70,11 @@ function updateDeviceCard(data) {
         card.dataset.gesamtdosis = v;
     }
 
+    // Offset-Werte in dataset aktualisieren
+    if (data.offset_alpha !== undefined) card.dataset.offsetAlpha = data.offset_alpha;
+    if (data.offset_beta  !== undefined) card.dataset.offsetBeta  = data.offset_beta;
+    if (data.offset_gamma !== undefined) card.dataset.offsetGamma = data.offset_gamma;
+
     // Strahlungswerte (Quelle)
     const felder = { alpha: ".staerke-alpha", beta: ".staerke-beta", gamma: ".staerke-gamma" };
     for (const [typ, selector] of Object.entries(felder)) {
@@ -181,7 +186,10 @@ function buildDeviceCard(device) {
     const icon = device.typ === "messgeraet" ? "geiger_icon.png" : "quelle_icon.png";
 
     if (device.typ === "messgeraet") {
-        card.dataset.gesamtdosis = device.gesamtdosis || 0;
+        card.dataset.gesamtdosis  = device.gesamtdosis || 0;
+        card.dataset.offsetAlpha  = device.offset_alpha || 0;
+        card.dataset.offsetBeta   = device.offset_beta  || 0;
+        card.dataset.offsetGamma  = device.offset_gamma || 0;
         const v = parseFloat(device.gesamtdosis || 0);
         card.innerHTML = `
             <div class="device-icon"><img src="/static/img/${icon}" alt="${device.name}"></div>
@@ -308,6 +316,18 @@ function fillDetailModal(card) {
     const totalEl = document.getElementById("detailTotalDose");
     totalEl.innerText = totalDose.toFixed(2) + " mSv";
     setDoseColor(totalEl, totalDose);
+
+    // Offset-Felder befüllen (aus data-Attributen der Karte)
+    const offsetAlphaEl = document.getElementById("detailOffsetAlpha");
+    const offsetBetaEl  = document.getElementById("detailOffsetBeta");
+    const offsetGammaEl = document.getElementById("detailOffsetGamma");
+    if (offsetAlphaEl) offsetAlphaEl.value = parseFloat(card.dataset.offsetAlpha || 0).toFixed(2);
+    if (offsetBetaEl)  offsetBetaEl.value  = parseFloat(card.dataset.offsetBeta  || 0).toFixed(2);
+    if (offsetGammaEl) offsetGammaEl.value = parseFloat(card.dataset.offsetGamma || 0).toFixed(2);
+
+    // Feedback-Zeile zurücksetzen
+    const fb = document.getElementById("offsetFeedback");
+    if (fb) fb.style.display = "none";
 
 
     } else {
@@ -809,7 +829,8 @@ document.addEventListener("DOMContentLoaded", function () {
 
 function switchTab(tab) {
     ["dashboard", "uebungen", "live"].forEach(t => {
-        document.getElementById("page-" + t).style.display = t === tab ? "block" : "none";
+        const page = document.getElementById("page-" + t);
+        if (page) page.style.display = t === tab ? "block" : "none";
         const link = document.getElementById("tab-" + t);
         if (link) link.classList.toggle("tab-active", t === tab);
     });
@@ -818,6 +839,85 @@ function switchTab(tab) {
         if (!chartCpsVerlauf) initCharts();
         ladeLiveUebungen();
     }
+}
+
+/* =========================================================
+   OFFSET-STEUERUNG (im Detail-Modal)
+========================================================= */
+
+function saveOffset() {
+    if (!activeDeviceId) return;
+
+    const alpha = parseFloat(document.getElementById("detailOffsetAlpha")?.value) || 0;
+    const beta  = parseFloat(document.getElementById("detailOffsetBeta")?.value)  || 0;
+    const gamma = parseFloat(document.getElementById("detailOffsetGamma")?.value) || 0;
+
+    fetch(`/device/${activeDeviceId}/offset`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ offset_alpha: alpha, offset_beta: beta, offset_gamma: gamma, reset: false }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        const fb = document.getElementById("offsetFeedback");
+        if (!fb) return;
+        if (data.ok) {
+            const mqttHinweis = data.mqtt_ok ? "" : " (MQTT nicht erreichbar)";
+            fb.style.color   = "#27ae60";
+            fb.textContent   = `✓ Offset gesendet${mqttHinweis}`;
+            // Werte im card-dataset aktualisieren
+            const card = document.querySelector(`.device-card[data-id='${activeDeviceId}']`);
+            if (card) {
+                card.dataset.offsetAlpha = alpha;
+                card.dataset.offsetBeta  = beta;
+                card.dataset.offsetGamma = gamma;
+            }
+        } else {
+            fb.style.color = "#e74c3c";
+            fb.textContent = "✗ Fehler: " + (data.error || "Unbekannt");
+        }
+        fb.style.display = "block";
+        clearTimeout(fb._timer);
+        fb._timer = setTimeout(() => { fb.style.display = "none"; }, 3000);
+    })
+    .catch(() => {
+        const fb = document.getElementById("offsetFeedback");
+        if (fb) { fb.style.color = "#e74c3c"; fb.textContent = "✗ Verbindungsfehler"; fb.style.display = "block"; }
+    });
+}
+
+function sendOffsetReset() {
+    if (!activeDeviceId) return;
+    if (!confirm("Gesamtdosis auf diesem Messgerät zurücksetzen?")) return;
+
+    const alpha = parseFloat(document.getElementById("detailOffsetAlpha")?.value) || 0;
+    const beta  = parseFloat(document.getElementById("detailOffsetBeta")?.value)  || 0;
+    const gamma = parseFloat(document.getElementById("detailOffsetGamma")?.value) || 0;
+
+    fetch(`/device/${activeDeviceId}/offset`, {
+        method:  "POST",
+        headers: { "Content-Type": "application/json" },
+        body:    JSON.stringify({ offset_alpha: alpha, offset_beta: beta, offset_gamma: gamma, reset: true }),
+    })
+    .then(r => r.json())
+    .then(data => {
+        const fb = document.getElementById("offsetFeedback");
+        if (!fb) return;
+        if (data.ok) {
+            fb.style.color = "#27ae60";
+            fb.textContent = "↺ Reset-Befehl gesendet";
+        } else {
+            fb.style.color = "#e74c3c";
+            fb.textContent = "✗ Fehler: " + (data.error || "Unbekannt");
+        }
+        fb.style.display = "block";
+        clearTimeout(fb._timer);
+        fb._timer = setTimeout(() => { fb.style.display = "none"; }, 3000);
+    })
+    .catch(() => {
+        const fb = document.getElementById("offsetFeedback");
+        if (fb) { fb.style.color = "#e74c3c"; fb.textContent = "✗ Verbindungsfehler"; fb.style.display = "block"; }
+    });
 }
 
 /* =========================================================
