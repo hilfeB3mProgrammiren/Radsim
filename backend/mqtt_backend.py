@@ -217,7 +217,7 @@ def send_quelle_cmd(client, mac: str,
     }
     topic = f"sources/cmd/{mac.upper()}"
     client.publish(topic, json.dumps(payload), qos=1)
-    print(f"[QUELLE→] {topic}  α={alpha} β={beta} γ={gamma} status={status}")
+    print(f"[QUELLE→] {topic}  cps_alpha={alpha} cps_beta={beta} cps_gamma={gamma} status={status}")
 
 
 def send_zaehler_cmd(client, mac: str,

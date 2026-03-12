@@ -1350,12 +1350,15 @@ main {
 
 .live-chart-wrap {
     position: relative;
-    height: 220px;
+    height: 620px;
+    max-height: 620px;  /* NEU */
+    overflow: hidden;
 }
 
 .live-chart-wrap canvas {
     width: 100% !important;
     height: 100% !important;
+    max-height: 620px;  /* NEU */
 }
 
 .live-empty-hint {

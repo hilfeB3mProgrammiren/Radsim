@@ -1,8 +1,8 @@
 import eventlet
 eventlet.monkey_patch()
 
-import threading
-import time
+import os
+import json as _json
 from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from flask_login import LoginManager, login_required, current_user
@@ -13,7 +13,7 @@ from users import get_user_by_id
 init_db()
 
 app = Flask(__name__, template_folder="../frontend/templates", static_folder="../frontend/static")
-app.secret_key = "super-secret-key"
+app.secret_key = os.environ.get("SECRET_KEY") or os.urandom(24)
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 app.config["SESSION_COOKIE_SECURE"]   = False
 
@@ -33,6 +33,30 @@ app.register_blueprint(auth)
 
 from flask_socketio import emit
 
+# --------------------
+# MQTT-Hilfsfunktion
+# --------------------
+def mqtt_publish(topic: str, payload: dict):
+    """Sendet eine MQTT-Nachricht. Gibt True bei Erfolg zurück."""
+    try:
+        import paho.mqtt.publish as publish
+        publish.single(
+            topic,
+            _json.dumps(payload),
+            hostname="localhost",
+            port=1883,
+            qos=1,
+        )
+        print(f"[MQTT→] {topic}  {payload}")
+        return True
+    except Exception as e:
+        print(f"[MQTT-Fehler] {topic}: {e}")
+        return False
+
+
+# --------------------
+# SocketIO Events
+# --------------------
 @socketio.on("connect")
 def on_connect():
     db = get_db()
@@ -66,12 +90,12 @@ def on_connect():
             "timestamp":          str(m["timestamp"]),
         })
 
+
 # --------------------
 # Messdaten Watcher (Fallback falls HTTP-Push fehlschlägt)
 # --------------------
 def messdaten_watcher():
     import sqlite3 as _sqlite3
-    import os
 
     try:
         from database import DB_PATH
@@ -88,21 +112,23 @@ def messdaten_watcher():
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA busy_timeout=5000")
 
-            neueste = conn.execute("""
-                SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
-                       m.cps_alpha, m.cps_beta, m.cps_gamma,
-                       m.dosis_alpha, m.dosis_beta,
-                       g.gesamtdosis, g.gesamtdosis_alpha, g.gesamtdosis_beta,
-                       g.akku, g.status, g.letzter_kontakt
-                FROM messungen m
-                JOIN geraete g ON g.id = m.geraet_id
-                INNER JOIN (
-                    SELECT geraet_id, MAX(id) as max_id
-                    FROM messungen
-                    GROUP BY geraet_id
-                ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
-            """).fetchall()
-            conn.close()
+            try:
+                neueste = conn.execute("""
+                    SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
+                           m.cps_alpha, m.cps_beta, m.cps_gamma,
+                           m.dosis_alpha, m.dosis_beta,
+                           g.gesamtdosis, g.gesamtdosis_alpha, g.gesamtdosis_beta,
+                           g.akku, g.status, g.letzter_kontakt
+                    FROM messungen m
+                    JOIN geraete g ON g.id = m.geraet_id
+                    INNER JOIN (
+                        SELECT geraet_id, MAX(id) as max_id
+                        FROM messungen
+                        GROUP BY geraet_id
+                    ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
+                """).fetchall()
+            finally:
+                conn.close()
 
             for m in neueste:
                 gid = m["geraet_id"]
@@ -127,16 +153,15 @@ def messdaten_watcher():
 
         socketio.sleep(1)
 
+
 # --------------------
 # Interne Route für mqtt_backend → sofortiger SocketIO-Emit
 # --------------------
-
 @app.route("/internal/measurement", methods=["POST"])
 def internal_measurement():
     data = request.get_json()
     if not data:
         return "", 400
-    # Echte Gesamtdosis aus geraete-Tabelle holen (nicht den aktuellen Messwert)
     geraet_id = data.get("id")
     if geraet_id:
         db = get_db()
@@ -151,6 +176,7 @@ def internal_measurement():
     payload = {k: v for k, v in data.items() if v is not None}
     socketio.emit("measurement", payload)
     return "", 200
+
 
 # --------------------
 # Routes
@@ -168,12 +194,13 @@ def index():
     users = db.execute("SELECT username FROM users").fetchall()
     return render_template("index.html", devices=devices, users=users, aktive_uebung=aktive_uebung)
 
+
 @app.route("/add_device", methods=["POST"])
 @login_required
 def add_device():
     data = request.get_json()
     db = get_db()
-    db.execute(
+    cur = db.execute(
         """INSERT INTO geraete
            (name, typ, staerke_alpha, staerke_beta, staerke_gamma, mac_adresse, status, akku)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
@@ -189,9 +216,11 @@ def add_device():
         )
     )
     db.commit()
-    neues_geraet = dict(db.execute("SELECT * FROM geraete ORDER BY id DESC LIMIT 1").fetchone())
+    # FIX: lastrowid statt ORDER BY DESC LIMIT 1 (Race condition)
+    neues_geraet = dict(db.execute("SELECT * FROM geraete WHERE id = ?", (cur.lastrowid,)).fetchone())
     socketio.emit("new_device", neues_geraet)
     return jsonify(neues_geraet), 200
+
 
 @app.route("/device/<int:geraet_id>", methods=["PATCH"])
 @login_required
@@ -206,7 +235,24 @@ def update_device(geraet_id):
     db.commit()
     aktualisiert = dict(db.execute("SELECT * FROM geraete WHERE id = ?", (geraet_id,)).fetchone())
     socketio.emit("device_updated", aktualisiert)
+
+    # FIX: Strahlungswerte per MQTT an Quelle senden wenn Stärken geändert wurden
+    strahlungs_felder = {"staerke_alpha", "staerke_beta", "staerke_gamma", "status"}
+    if (aktualisiert.get("typ") == "quelle"
+            and aktualisiert.get("mac_adresse")
+            and strahlungs_felder & set(data.keys())):
+        mqtt_publish(
+            f"sources/cmd/{aktualisiert['mac_adresse'].upper()}",
+            {
+                "alpha":  round(float(aktualisiert.get("staerke_alpha") or 0), 3),
+                "beta":   round(float(aktualisiert.get("staerke_beta")  or 0), 3),
+                "gamma":  round(float(aktualisiert.get("staerke_gamma") or 0), 3),
+                "status": aktualisiert.get("status") or "aktiv",
+            }
+        )
+
     return jsonify(aktualisiert), 200
+
 
 @app.route("/measurements/history")
 def measurements_history():
@@ -223,28 +269,34 @@ def measurements_history():
     if not uebung_id:
         return jsonify([])
 
+    # FIX: DESC + LIMIT holt die neuesten N Punkte, äußeres ASC sortiert für den Graph
     if geraet_id:
         rows = db.execute("""
-            SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
-                   m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
-            FROM messungen m
-            JOIN geraete g ON g.id = m.geraet_id
-            WHERE m.uebung_id = ? AND m.geraet_id = ?
-            ORDER BY m.timestamp ASC
-            LIMIT ?
+            SELECT * FROM (
+                SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
+                       m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
+                FROM messungen m
+                JOIN geraete g ON g.id = m.geraet_id
+                WHERE m.uebung_id = ? AND m.geraet_id = ?
+                ORDER BY m.timestamp DESC
+                LIMIT ?
+            ) ORDER BY timestamp ASC
         """, (uebung_id, geraet_id, limit)).fetchall()
     else:
         rows = db.execute("""
-            SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
-                   m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
-            FROM messungen m
-            JOIN geraete g ON g.id = m.geraet_id
-            WHERE m.uebung_id = ?
-            ORDER BY m.timestamp ASC
-            LIMIT ?
+            SELECT * FROM (
+                SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
+                       m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
+                FROM messungen m
+                JOIN geraete g ON g.id = m.geraet_id
+                WHERE m.uebung_id = ?
+                ORDER BY m.timestamp DESC
+                LIMIT ?
+            ) ORDER BY timestamp ASC
         """, (uebung_id, limit)).fetchall()
 
     return jsonify([dict(r) for r in rows])
+
 
 @app.route("/uebungen/liste")
 def uebungen_liste():
@@ -260,9 +312,11 @@ def uebungen_liste():
         result.append(u)
     return jsonify(result)
 
+
 @app.route("/measurements/latest")
 def measurements_latest():
     db = get_db()
+    # FIX: MAX(id) statt MAX(timestamp) – Timestamps können bei schnellen Messungen gleich sein
     rows = db.execute("""
         SELECT m.geraet_id AS id,
                m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
@@ -272,12 +326,13 @@ def measurements_latest():
         FROM messungen m
         JOIN geraete g ON g.id = m.geraet_id
         INNER JOIN (
-            SELECT geraet_id, MAX(timestamp) AS max_ts
+            SELECT geraet_id, MAX(id) AS max_id
             FROM messungen
             GROUP BY geraet_id
-        ) latest ON m.geraet_id = latest.geraet_id AND m.timestamp = latest.max_ts
+        ) latest ON m.geraet_id = latest.geraet_id AND m.id = latest.max_id
     """).fetchall()
     return jsonify([dict(r) for r in rows])
+
 
 @app.route("/devices/ohne_uebung")
 @login_required
@@ -307,6 +362,7 @@ def devices_ohne_uebung():
 
     return jsonify([dict(r) for r in rows])
 
+
 @app.route("/device/<int:geraet_id>/add_to_uebung", methods=["POST"])
 @login_required
 def add_to_uebung(geraet_id):
@@ -319,6 +375,7 @@ def add_to_uebung(geraet_id):
     socketio.emit("new_device", geraet)
     return jsonify(geraet), 200
 
+
 @app.route("/device/<int:geraet_id>", methods=["DELETE"])
 @login_required
 def delete_device(geraet_id):
@@ -330,6 +387,7 @@ def delete_device(geraet_id):
     socketio.emit("device_deleted", {"id": geraet_id})
     return "", 200
 
+
 @app.route("/device/<int:geraet_id>/remove_from_uebung", methods=["POST"])
 @login_required
 def remove_from_uebung(geraet_id):
@@ -338,6 +396,7 @@ def remove_from_uebung(geraet_id):
     db.commit()
     socketio.emit("device_updated", {"id": geraet_id, "uebung_id": None})
     return "", 200
+
 
 @app.route("/device/<int:geraet_id>/reset_dosis", methods=["POST"])
 @login_required
@@ -358,10 +417,10 @@ def reset_dosis(geraet_id):
     })
     return "", 200
 
+
 @app.route("/device/<int:geraet_id>/offset", methods=["POST"])
 @login_required
 def set_offset(geraet_id):
-    import json as _json
     data = request.get_json()
     if not data:
         return jsonify({"error": "Kein JSON-Body"}), 400
@@ -390,25 +449,16 @@ def set_offset(geraet_id):
 
     mqtt_ok = False
     if mac:
-        try:
-            import paho.mqtt.publish as publish
-            payload = _json.dumps({
+        mqtt_ok = mqtt_publish(
+            f"devices/cmd/{mac.upper()}",
+            {
                 "offset_alpha": round(offset_alpha, 3),
                 "offset_beta":  round(offset_beta,  3),
                 "offset_gamma": round(offset_gamma, 3),
                 "reset":        reset,
                 "status":       geraet["status"] or "aktiv",
-            })
-            publish.single(
-                f"devices/cmd/{mac.upper()}",
-                payload,
-                hostname="localhost",
-                port=1883,
-                qos=1,
-            )
-            mqtt_ok = True
-        except Exception as e:
-            print(f"[OFFSET] MQTT-Fehler: {e}")
+            }
+        )
 
     socketio.emit("device_updated", {
         "id":           geraet_id,
@@ -430,6 +480,7 @@ def set_offset(geraet_id):
         }
     }), 200
 
+
 @app.route("/messgeraete/offsets")
 @login_required
 def get_messgeraete_offsets():
@@ -442,6 +493,7 @@ def get_messgeraete_offsets():
            ORDER BY name"""
     ).fetchall()
     return jsonify([dict(r) for r in rows])
+
 
 # --------------------
 # Übungen Routes
@@ -462,6 +514,7 @@ def get_uebungen():
         ).fetchone()[0]
         result.append(u)
     return jsonify(result)
+
 
 @app.route("/uebungen", methods=["POST"])
 @login_required
@@ -488,6 +541,7 @@ def create_uebung():
         socketio.emit("uebung_gestartet", {"id": neue["id"], "name": neue["name"]})
     return jsonify(neue), 200
 
+
 @app.route("/uebung/<int:uebung_id>", methods=["GET"])
 def get_uebung(uebung_id):
     db = get_db()
@@ -499,6 +553,7 @@ def get_uebung(uebung_id):
     u["geraete"] = [dict(g) for g in geraete]
     return jsonify(u)
 
+
 @app.route("/uebung/<int:uebung_id>/aktivieren", methods=["POST"])
 @login_required
 def uebung_aktivieren(uebung_id):
@@ -509,6 +564,7 @@ def uebung_aktivieren(uebung_id):
     u = dict(db.execute("SELECT * FROM uebungen WHERE id = ?", (uebung_id,)).fetchone())
     socketio.emit("uebung_gestartet", {"id": u["id"], "name": u["name"]})
     return jsonify(u), 200
+
 
 @app.route("/uebung/<int:uebung_id>/beenden", methods=["POST"])
 @login_required
@@ -522,6 +578,7 @@ def uebung_beenden(uebung_id):
     socketio.emit("uebung_gestoppt", {"id": uebung_id})
     return "", 200
 
+
 @app.route("/uebung/<int:uebung_id>", methods=["DELETE"])
 @login_required
 def delete_uebung(uebung_id):
@@ -532,6 +589,7 @@ def delete_uebung(uebung_id):
     socketio.emit("uebung_gestoppt", {"id": uebung_id})
     return "", 200
 
+
 @app.route("/device/<int:geraet_id>/add_to_specific_uebung/<int:uebung_id>", methods=["POST"])
 @login_required
 def add_to_specific_uebung(geraet_id, uebung_id):
@@ -541,6 +599,7 @@ def add_to_specific_uebung(geraet_id, uebung_id):
     geraet = dict(db.execute("SELECT * FROM geraete WHERE id = ?", (geraet_id,)).fetchone())
     socketio.emit("new_device", geraet)
     return jsonify(geraet), 200
+
 
 # --------------------
 # Start

@@ -1264,7 +1264,25 @@ function initCharts() {
     chartAlphaVerlauf  = new Chart(document.getElementById("chartAlphaVerlauf"),  { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
     chartBetaVerlauf   = new Chart(document.getElementById("chartBetaVerlauf"),   { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
     chartGammaVerlauf  = new Chart(document.getElementById("chartGammaVerlauf"),  { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
-    chartGesamtVerlauf = new Chart(document.getElementById("chartGesamtVerlauf"), { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv") });
+    chartGesamtVerlauf = new Chart(document.getElementById("chartGesamtVerlauf"), {
+    type: "line",
+    data: { labels: [], datasets: [] },
+    options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+            x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+            y: {
+                beginAtZero: true,
+                suggestedMax: 0.01,
+                ticks: { precision: 4 },
+                title: { display: true, text: "mSv", font: { size: 11 } }
+            }
+        }
+    }
+});
     chartAlphaBar      = new Chart(document.getElementById("chartAlphaBar"),      { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
     chartBetaBar       = new Chart(document.getElementById("chartBetaBar"),       { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
     chartGammaBar      = new Chart(document.getElementById("chartGammaBar"),      { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
