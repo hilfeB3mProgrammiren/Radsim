@@ -8,10 +8,13 @@ let dbGeraeteCache         = [];
 let uebungenCache          = [];
 let aktiveUebungDetailId   = null;
 
-let chartCpsVerlauf   = null;
-let chartDosisVerlauf = null;
-let chartCpsBar       = null;
-let chartDosisBar     = null;
+let chartAlphaVerlauf  = null;
+let chartBetaVerlauf   = null;
+let chartGammaVerlauf  = null;
+let chartGesamtVerlauf = null;
+let chartAlphaBar      = null;
+let chartBetaBar       = null;
+let chartGammaBar      = null;
 
 /* =========================================================
    HILFSFUNKTIONEN
@@ -54,21 +57,36 @@ function updateDeviceCard(data) {
         card.dataset.akku = data.akku ?? "";
     }
 
-    // Messwerte (Messgerät)
-    const currentEl = card.querySelector(".current-dose");
-    const totalEl   = card.querySelector(".total-dose");
+    // Messwerte (Messgerät) – alle drei Strahlungstypen
+    const typen = [
+        { key: "cps_alpha",  sel: ".cps-alpha",  ds: "cpsAlpha",  unit: "mSv/h" },
+        { key: "cps_beta",   sel: ".cps-beta",   ds: "cpsBeta",   unit: "mSv/h" },
+        { key: "cps_gamma",  sel: ".cps-gamma",  ds: "cpsGamma",  unit: "mSv/h" },
+    ];
+    typen.forEach(({ key, sel, ds, unit }) => {
+        const el = card.querySelector(sel);
+        if (el && data[key] !== undefined) {
+            const v = parseFloat(data[key]);
+            el.innerText = v.toFixed(2) + " " + unit;
+            el.classList.toggle("aktiv", v > 0);
+            setDoseColor(el, v);
+            card.dataset[ds] = v;
+        }
+    });
 
-    if (currentEl && data.cps !== undefined) {
-        const v = parseFloat(data.cps);
-        currentEl.innerText = v.toFixed(2) + " mSv/h";
-        setDoseColor(currentEl, v);
+    if (data.gesamtdosis !== undefined) {
+        card.dataset.gesamtdosis = data.gesamtdosis;
+        const totalEl = card.querySelector(".total-dose");
+        if (totalEl) {
+            const v = parseFloat(data.gesamtdosis);
+            totalEl.innerText = v.toFixed(2) + " mSv";
+            totalEl.classList.toggle("aktiv", v > 0);
+        }
     }
-    if (totalEl && data.gesamtdosis !== undefined) {
-        const v = parseFloat(data.gesamtdosis);
-        totalEl.innerText = v.toFixed(2) + " mSv";
-        setDoseColor(totalEl, v);
-        card.dataset.gesamtdosis = v;
-    }
+    if (data.gesamtdosis_alpha !== undefined) card.dataset.gesamtdosisAlpha = data.gesamtdosis_alpha;
+    if (data.gesamtdosis_beta  !== undefined) card.dataset.gesamtdosisBeta  = data.gesamtdosis_beta;
+    if (data.dosis_alpha       !== undefined) card.dataset.dosisAlpha = data.dosis_alpha;
+    if (data.dosis_beta        !== undefined) card.dataset.dosisBeta  = data.dosis_beta;
 
     // Offset-Werte in dataset aktualisieren
     if (data.offset_alpha !== undefined) card.dataset.offsetAlpha = data.offset_alpha;
@@ -98,6 +116,9 @@ function updateDeviceCard(data) {
    SOCKET EVENTS
 ========================================================= */
 
+// Debounce-Timer für Chart-Refresh (max. alle 5 Sekunden neu laden)
+let chartRefreshTimer = null;
+
 socket.on("measurement", data => {
     const cpsElement = document.getElementById("cps");
     if (cpsElement && data.cps !== undefined) {
@@ -105,6 +126,17 @@ socket.on("measurement", data => {
         updateChart(data.cps);
     }
     updateDeviceCard(data);
+
+    // Live-Tab: Graphen automatisch aktualisieren (gedrosselt auf 5s)
+    const liveTab = document.getElementById("page-live");
+    if (liveTab && liveTab.style.display !== "none") {
+        if (!chartRefreshTimer) {
+            chartRefreshTimer = setTimeout(() => {
+                ladeCharts();
+                chartRefreshTimer = null;
+            }, 5000);
+        }
+    }
 });
 
 socket.on("device_updated", data => {
@@ -186,17 +218,33 @@ function buildDeviceCard(device) {
     const icon = device.typ === "messgeraet" ? "geiger_icon.png" : "quelle_icon.png";
 
     if (device.typ === "messgeraet") {
-        card.dataset.gesamtdosis  = device.gesamtdosis || 0;
-        card.dataset.offsetAlpha  = device.offset_alpha || 0;
-        card.dataset.offsetBeta   = device.offset_beta  || 0;
-        card.dataset.offsetGamma  = device.offset_gamma || 0;
+        card.dataset.gesamtdosis       = device.gesamtdosis || 0;
+        card.dataset.gesamtdosisAlpha  = device.gesamtdosis_alpha || 0;
+        card.dataset.gesamtdosisBeta   = device.gesamtdosis_beta  || 0;
+        card.dataset.offsetAlpha       = device.offset_alpha || 0;
+        card.dataset.offsetBeta        = device.offset_beta  || 0;
+        card.dataset.offsetGamma       = device.offset_gamma || 0;
         const v = parseFloat(device.gesamtdosis || 0);
         card.innerHTML = `
             <div class="device-icon"><img src="/static/img/${icon}" alt="${device.name}"></div>
             <div class="device-name">${device.name}</div>
-            <div class="device-doses">
-                <div class="current-dose dose-green">— mSv/h</div>
-                <div class="total-dose ${doseClass(v)}">${v.toFixed(2)} mSv</div>
+            <div class="device-source-info">
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">α Alpha</span>
+                    <span class="cps-alpha staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">β Beta</span>
+                    <span class="cps-beta staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">γ Gamma</span>
+                    <span class="cps-gamma staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile strahlung-zeile-gesamt">
+                    <span class="strahlungsart" style="color:#888;">Σγ Gesamtdosis</span>
+                    <span class="total-dose staerke-wert ${doseClass(v)}">${v.toFixed(2)} mSv</span>
+                </div>
             </div>`;
     } else {
         card.dataset.alpha = device.staerke_alpha || 0;
@@ -301,23 +349,22 @@ function fillDetailModal(card) {
     if (typ === "messgeraet") {
     document.getElementById("detailMessgeraet").style.display = "block";
 
-    const currentDose = card.querySelector(".current-dose")?.innerText || "— mSv/h";
-    const totalDose   = parseFloat(card.dataset.gesamtdosis || 0);
+    // Aktuelle Dosisraten α/β/γ
+    const setVal = (id, val, unit) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const v = parseFloat(val || 0);
+        el.innerText = v.toFixed(2) + " " + unit;
+        setDoseColor(el, v);
+    };
+    setVal("detailCpsAlpha",  card.dataset.cpsAlpha  ?? card.querySelector(".cps-alpha")?.innerText,  "mSv/h");
+    setVal("detailCpsBeta",   card.dataset.cpsBeta   ?? card.querySelector(".cps-beta")?.innerText,   "mSv/h");
+    setVal("detailCpsGamma",  card.dataset.cpsGamma  ?? card.querySelector(".cps-gamma")?.innerText,  "mSv/h");
 
-    const currentEl = document.getElementById("detailCurrentDose");
-    currentEl.innerText = currentDose;
-    
-    // Farbe für aktuelle Dosis
-    const currentWert = parseFloat(currentDose);
-    if (!isNaN(currentWert)) {
-        setDoseColor(currentEl, currentWert);
-    }
+    // Gesamtdosis nur γ Gamma
+    setVal("detailTotalDose",  card.dataset.gesamtdosis, "mSv");
 
-    const totalEl = document.getElementById("detailTotalDose");
-    totalEl.innerText = totalDose.toFixed(2) + " mSv";
-    setDoseColor(totalEl, totalDose);
-
-    // Offset-Felder befüllen (aus data-Attributen der Karte)
+    // Offset-Felder befüllen
     const offsetAlphaEl = document.getElementById("detailOffsetAlpha");
     const offsetBetaEl  = document.getElementById("detailOffsetBeta");
     const offsetGammaEl = document.getElementById("detailOffsetGamma");
@@ -836,7 +883,7 @@ function switchTab(tab) {
     });
     if (tab === "uebungen") ladeUebungen();
     if (tab === "live") {
-        if (!chartCpsVerlauf) initCharts();
+        if (!chartAlphaVerlauf) initCharts();
         ladeLiveUebungen();
     }
 }
@@ -1193,58 +1240,34 @@ const CHART_COLORS = [
 
 
 function initCharts() {
-    const defaults = {
+    const lineOpts = (yLabel) => ({
         responsive: true,
         maintainAspectRatio: false,
         animation: { duration: 400 },
-        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } }
-    };
-
-    chartCpsVerlauf = new Chart(document.getElementById("chartCpsVerlauf"), {
-        type: "line",
-        data: { labels: [], datasets: [] },
-        options: { ...defaults,
-            scales: {
-                x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
-                y: { beginAtZero: true, title: { display: true, text: "mSv/h", font: { size: 11 } } }
-            }
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+            x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
+            y: { beginAtZero: true, title: { display: true, text: yLabel, font: { size: 11 } } }
+        }
+    });
+    const barOpts = (yLabel) => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        animation: { duration: 400 },
+        plugins: { legend: { position: "bottom", labels: { boxWidth: 10, font: { size: 10 } } } },
+        scales: {
+            x: { ticks: { font: { size: 10 } } },
+            y: { beginAtZero: true, title: { display: true, text: yLabel, font: { size: 11 } } }
         }
     });
 
-    chartDosisVerlauf = new Chart(document.getElementById("chartDosisVerlauf"), {
-        type: "line",
-        data: { labels: [], datasets: [] },
-        options: { ...defaults,
-            scales: {
-                x: { ticks: { maxTicksLimit: 10, font: { size: 10 } } },
-                y: { beginAtZero: true, title: { display: true, text: "mSv", font: { size: 11 } } }
-            }
-        }
-    });
-
-    chartCpsBar = new Chart(document.getElementById("chartCpsBar"), {
-        type: "bar",
-        data: { labels: [], datasets: [{ label: "Aktuelle Dosisrate (mSv/h)", data: [], backgroundColor: [] }] },
-        options: { ...defaults,
-            plugins: { ...defaults.plugins, legend: { display: false } },
-            scales: {
-                x: { ticks: { font: { size: 10 } } },
-                y: { beginAtZero: true, title: { display: true, text: "mSv/h", font: { size: 11 } } }
-            }
-        }
-    });
-
-    chartDosisBar = new Chart(document.getElementById("chartDosisBar"), {
-        type: "bar",
-        data: { labels: [], datasets: [{ label: "Gesamtdosis (mSv)", data: [], backgroundColor: [] }] },
-        options: { ...defaults,
-            plugins: { ...defaults.plugins, legend: { display: false } },
-            scales: {
-                x: { ticks: { font: { size: 10 } } },
-                y: { beginAtZero: true, title: { display: true, text: "mSv", font: { size: 11 } } }
-            }
-        }
-    });
+    chartAlphaVerlauf  = new Chart(document.getElementById("chartAlphaVerlauf"),  { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
+    chartBetaVerlauf   = new Chart(document.getElementById("chartBetaVerlauf"),   { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
+    chartGammaVerlauf  = new Chart(document.getElementById("chartGammaVerlauf"),  { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv/h") });
+    chartGesamtVerlauf = new Chart(document.getElementById("chartGesamtVerlauf"), { type: "line", data: { labels: [], datasets: [] }, options: lineOpts("mSv") });
+    chartAlphaBar      = new Chart(document.getElementById("chartAlphaBar"),      { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
+    chartBetaBar       = new Chart(document.getElementById("chartBetaBar"),       { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
+    chartGammaBar      = new Chart(document.getElementById("chartGammaBar"),      { type: "bar",  data: { labels: [], datasets: [] }, options: barOpts("mSv/h") });
 }
 
 function ladeLiveUebungen() {
@@ -1317,50 +1340,52 @@ function ladeCharts() {
             hint.style.display = "none";
             document.querySelector(".live-charts-grid").style.display = "grid";
 
-            // Daten nach Gerät gruppieren
+            // Alle Timestamps sammeln und sortieren (gemeinsame X-Achse)
+            const alleTimestamps = [...new Set(daten.map(m =>
+                new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+            ))].sort();
+
+            // Daten nach Gerät gruppieren mit Timestamp-Alignment
             const geraeteMap = {};
             daten.forEach(m => {
                 if (!geraeteMap[m.geraet_id]) {
-                    geraeteMap[m.geraet_id] = { name: m.geraet_name, cps: [], dosis: [], timestamps: [] };
+                    geraeteMap[m.geraet_id] = {
+                        name: m.geraet_name,
+                        byTs: {}
+                    };
                 }
-                geraeteMap[m.geraet_id].cps.push(m.cps);
-                geraeteMap[m.geraet_id].dosis.push(m.dosis);
-                geraeteMap[m.geraet_id].timestamps.push(
-                    new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-                );
+                const ts = new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+                geraeteMap[m.geraet_id].byTs[ts] = m;
             });
 
             const geraeteIds  = Object.keys(geraeteMap);
-            const geraeteList = geraeteIds.map((id, i) => ({ id, ...geraeteMap[id], color: CHART_COLORS[i % CHART_COLORS.length] }));
+            const geraeteList = geraeteIds.map((id, i) => {
+                const g = geraeteMap[id];
+                // Arrays aligned auf alleTimestamps – fehlende Werte = null (Lücke im Chart)
+                return {
+                    id,
+                    name:        g.name,
+                    color:       CHART_COLORS[i % CHART_COLORS.length],
+                    cps_alpha:   alleTimestamps.map(ts => g.byTs[ts]?.cps_alpha  ?? null),
+                    cps_beta:    alleTimestamps.map(ts => g.byTs[ts]?.cps_beta   ?? null),
+                    cps_gamma:   alleTimestamps.map(ts => g.byTs[ts]?.cps_gamma  ?? null),
+                    dosis_alpha: alleTimestamps.map(ts => g.byTs[ts]?.dosis_alpha ?? null),
+                    dosis_beta:  alleTimestamps.map(ts => g.byTs[ts]?.dosis_beta  ?? null),
+                    dosis:       alleTimestamps.map(ts => g.byTs[ts]?.dosis       ?? null),
+                };
+            });
 
-            // Gemeinsame Zeitachse (alle Timestamps sammeln und deduplizieren)
-            const alleTimestamps = [...new Set(daten.map(m =>
-                new Date(m.timestamp).toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
-            ))];
+            // Verlaufs-Diagramme: je ein Strahlungstyp pro Chart
+            updateVerlaufEinTyp(chartAlphaVerlauf,  geraeteList, alleTimestamps, "cps_alpha", "#e74c3c");
+            updateVerlaufEinTyp(chartBetaVerlauf,   geraeteList, alleTimestamps, "cps_beta",  "#e67e22");
+            updateVerlaufEinTyp(chartGammaVerlauf,  geraeteList, alleTimestamps, "cps_gamma", "#27ae60");
+            updateVerlaufEinTyp(chartGesamtVerlauf, geraeteList, alleTimestamps, "dosis",     "#8e44ad");
 
-            // Verlaufs-Diagramme (Linien)
-            updateVerlaufChart(chartCpsVerlauf,   geraeteList, "cps",   alleTimestamps);
-            updateVerlaufChart(chartDosisVerlauf, geraeteList, "dosis", alleTimestamps);
+            // Balken-Diagramme: je ein Strahlungstyp pro Chart
+            updateBarEinTyp(chartAlphaBar, geraeteList, "cps_alpha", "#e74c3c");
+            updateBarEinTyp(chartBetaBar,  geraeteList, "cps_beta",  "#e67e22");
+            updateBarEinTyp(chartGammaBar, geraeteList, "cps_gamma", "#27ae60");
 
-            // Untertitel
-            document.getElementById("liveCpsSubtitle").innerText  = `${daten.length} Messpunkte`;
-            document.getElementById("liveDosisSubtitle").innerText = `${geraeteList.length} Gerät${geraeteList.length !== 1 ? "e" : ""}`;
-
-            // Balken-Diagramme (letzter Wert je Gerät)
-            const barLabels = geraeteList.map(g => kuerze(g.name, 14));
-            const barColors = geraeteList.map(g => g.color);
-
-            chartCpsBar.data.labels                    = barLabels;
-            chartCpsBar.data.datasets[0].data           = geraeteList.map(g => g.cps.at(-1)   ?? 0);
-            chartCpsBar.data.datasets[0].backgroundColor = barColors;
-            chartCpsBar.update();
-
-            chartDosisBar.data.labels                    = barLabels;
-            chartDosisBar.data.datasets[0].data           = geraeteList.map(g => g.dosis.at(-1) ?? 0);
-            chartDosisBar.data.datasets[0].backgroundColor = barColors;
-            chartDosisBar.update();
-
-            // Stat-Kacheln
             renderStatCards(geraeteList);
         });
 }
@@ -1380,15 +1405,89 @@ function updateVerlaufChart(chart, geraeteList, feld, labels) {
     chart.update();
 }
 
+// Verlaufs-Chart mit α/β/γ als separate Datasets
+const TYP_FARBEN = { alpha: "#e74c3c", beta: "#e67e22", gamma: "#27ae60" };
+const TYP_DASH   = { alpha: [],        beta: [5,3],     gamma: [2,2]     };
+
+// Ein Strahlungstyp, alle Geräte als Datasets
+function updateVerlaufEinTyp(chart, geraeteList, labels, feld, farbe) {
+    chart.data.labels   = labels;
+    chart.data.datasets = geraeteList.map((g, i) => {
+        // Je Gerät eine leicht abgewandelte Farbe via Opacity-Stufen
+        const alpha = Math.round(255 * (0.9 - i * 0.12)).toString(16).padStart(2, "0");
+        return {
+            label:           g.name,
+            data:            g[feld],
+            borderColor:     farbe,
+            backgroundColor: farbe + "22",
+            borderWidth:     2,
+            borderDash:      i === 0 ? [] : i === 1 ? [5,3] : [2,2],
+            pointRadius:     g[feld].length > 60 ? 0 : 3,
+            tension:         0.3,
+            fill:            false
+        };
+    });
+    chart.update();
+}
+
+// Balken-Chart: ein Typ, alle Geräte als Labels
+function updateBarEinTyp(chart, geraeteList, feld, farbe) {
+    chart.data.labels   = geraeteList.map(g => kuerze(g.name, 14));
+    chart.data.datasets = [{
+        label:           feld.includes("alpha") ? "α Alpha" : feld.includes("beta") ? "β Beta" : "γ Gamma",
+        data:            geraeteList.map(g => g[feld].at(-1) ?? 0),
+        backgroundColor: farbe + "cc",
+        borderColor:     farbe,
+        borderWidth:     1,
+        borderRadius:    4
+    }];
+    chart.update();
+}
+
+function updateVerlaufChartTypen(chart, geraeteList, labels, felder, kuerzel) {
+    chart.data.labels   = labels;
+    chart.data.datasets = [];
+    geraeteList.forEach(g => {
+        felder.forEach((feld, ti) => {
+            const typKey = ["alpha","beta","gamma"][ti];
+            chart.data.datasets.push({
+                label:           geraeteList.length > 1 ? `${g.name} ${kuerzel[ti]}` : kuerzel[ti],
+                data:            g[feld],
+                borderColor:     TYP_FARBEN[typKey],
+                backgroundColor: TYP_FARBEN[typKey] + "22",
+                borderWidth:     2,
+                borderDash:      TYP_DASH[typKey],
+                pointRadius:     g[feld].length > 60 ? 0 : 2,
+                tension:         0.3,
+                fill:            false
+            });
+        });
+    });
+    chart.update();
+}
+
+// Balken-Chart: gruppierte Balken α/β/γ je Gerät
+function updateBarChartTypen(chart, geraeteList, felder, labels) {
+    chart.data.labels   = geraeteList.map(g => kuerze(g.name, 14));
+    chart.data.datasets = felder.map((feld, ti) => {
+        const typKey = ["alpha","beta","gamma"][ti];
+        return {
+            label:           labels[ti],
+            data:            geraeteList.map(g => g[feld].at(-1) ?? 0),
+            backgroundColor: TYP_FARBEN[typKey] + "cc",
+            borderColor:     TYP_FARBEN[typKey],
+            borderWidth:     1,
+        };
+    });
+    chart.update();
+}
+
 function renderStatCards(geraeteList) {
     const container = document.getElementById("liveStatCards");
 
-    // Gesamt-Statistiken
-    const alleDosiswerte = geraeteList.flatMap(g => g.dosis);
-    const alleCpswerte   = geraeteList.flatMap(g => g.cps);
-    const maxDosis  = Math.max(...alleDosiswerte).toFixed(1);
-    const maxCps    = Math.max(...alleCpswerte).toFixed(2);
-    const avgDosis  = (alleDosiswerte.reduce((a, b) => a + b, 0) / alleDosiswerte.length).toFixed(1);
+    const maxAlpha = Math.max(...geraeteList.map(g => g.cps_alpha.at(-1) ?? 0)).toFixed(2);
+    const maxBeta  = Math.max(...geraeteList.map(g => g.cps_beta.at(-1)  ?? 0)).toFixed(2);
+    const maxGamma = Math.max(...geraeteList.map(g => g.cps_gamma.at(-1) ?? 0)).toFixed(2);
 
     container.innerHTML = `
         <div class="live-stat-card">
@@ -1397,25 +1496,29 @@ function renderStatCards(geraeteList) {
             <span class="live-stat-sub">Messgeräte mit Daten</span>
         </div>
         <div class="live-stat-card">
-            <span class="live-stat-label">Max. Dosisrate</span>
-            <span class="live-stat-value">${maxCps}</span>
-            <span class="live-stat-sub">mSv/h (Spitzenwert)</span>
+            <span class="live-stat-label" style="color:#e74c3c">Max. α Alpha</span>
+            <span class="live-stat-value">${maxAlpha}</span>
+            <span class="live-stat-sub">mSv/h aktuell</span>
         </div>
         <div class="live-stat-card">
-            <span class="live-stat-label">Max. Gesamtdosis</span>
-            <span class="live-stat-value">${maxDosis}</span>
-            <span class="live-stat-sub">mSv (höchstes Gerät)</span>
+            <span class="live-stat-label" style="color:#e67e22">Max. β Beta</span>
+            <span class="live-stat-value">${maxBeta}</span>
+            <span class="live-stat-sub">mSv/h aktuell</span>
         </div>
         <div class="live-stat-card">
-            <span class="live-stat-label">Ø Gesamtdosis</span>
-            <span class="live-stat-value">${avgDosis}</span>
-            <span class="live-stat-sub">mSv (alle Geräte)</span>
+            <span class="live-stat-label" style="color:#27ae60">Max. γ Gamma</span>
+            <span class="live-stat-value">${maxGamma}</span>
+            <span class="live-stat-sub">mSv/h aktuell</span>
         </div>
         ${geraeteList.map(g => `
         <div class="live-stat-card">
             <span class="live-stat-label" style="color:${g.color}">${kuerze(g.name, 18)}</span>
-            <span class="live-stat-value">${(g.cps.at(-1) ?? 0).toFixed(2)}</span>
-            <span class="live-stat-sub">mSv/h aktuell · ${(g.dosis.at(-1) ?? 0).toFixed(1)} mSv gesamt</span>
+            <span class="live-stat-value">${(g.cps_gamma.at(-1) ?? 0).toFixed(2)}</span>
+            <span class="live-stat-sub">
+                α ${(g.cps_alpha.at(-1)??0).toFixed(2)} ·
+                β ${(g.cps_beta.at(-1)??0).toFixed(2)} ·
+                γ ${(g.cps_gamma.at(-1)??0).toFixed(2)} mSv/h
+            </span>
         </div>`).join("")}
     `;
 }
@@ -1487,7 +1590,11 @@ async function exportPDF() {
             wrap.style.height = isBar ? "700px" : "600px";
 
             // Chart-Labels für Balken: volle Namen, rotiert
-            const chartObj = { chartCpsBar: chartCpsBar, chartDosisBar: chartDosisBar }[canvasId];
+            const chartObj = {
+                chartAlphaBar: chartAlphaBar,
+                chartBetaBar:  chartBetaBar,
+                chartGammaBar: chartGammaBar
+            }[canvasId];
             let oldMaxRot, oldMinRot, oldCb;
             if (isBar && chartObj) {
                 const xScale = chartObj.options.scales.x;
@@ -1505,7 +1612,8 @@ async function exportPDF() {
             }
 
             // Chart resizen auf neue Containergröße
-            const anyChart = [chartCpsVerlauf, chartDosisVerlauf, chartCpsBar, chartDosisBar]
+            const anyChart = [chartAlphaVerlauf, chartBetaVerlauf, chartGammaVerlauf,
+                              chartAlphaBar, chartBetaBar, chartGammaBar]
                 .find(c => c && c.canvas.id === canvasId);
             if (anyChart) {
                 anyChart.resize();
@@ -1658,10 +1766,12 @@ async function exportPDF() {
 
         // ── Seiten 2–5: Je ein Diagramm ──────────────────────────────
         const diagramme = [
-            { id: "chartCpsVerlauf",   titel: "Dosisrate - Verlauf",          einheit: "mSv/h", beschreibung: "Aktuelle Dosisrate aller Messgeraete im Zeitverlauf" },
-            { id: "chartDosisVerlauf", titel: "Gesamtdosis - Verlauf",        einheit: "mSv",   beschreibung: "Kumulierte Gesamtdosis aller Messgeraete im Zeitverlauf" },
-            { id: "chartCpsBar",       titel: "Dosisrate - Geraetevergleich", einheit: "mSv/h", beschreibung: "Aktueller Dosisratenwert je Geraet (letzter Messpunkt)" },
-            { id: "chartDosisBar",     titel: "Gesamtdosis - Geraetevergleich", einheit: "mSv", beschreibung: "Gesamtdosis je Geraet (letzter Messpunkt)" },
+            { id: "chartAlphaVerlauf", titel: "Alpha-Dosisrate - Verlauf",          einheit: "mSv/h", beschreibung: "Aktuelle Alpha-Dosisrate aller Messgeraete im Zeitverlauf" },
+            { id: "chartAlphaBar",     titel: "Alpha-Dosisrate - Geraetevergleich", einheit: "mSv/h", beschreibung: "Aktueller Alpha-Dosisratenwert je Geraet (letzter Messpunkt)" },
+            { id: "chartBetaVerlauf",  titel: "Beta-Dosisrate - Verlauf",           einheit: "mSv/h", beschreibung: "Aktuelle Beta-Dosisrate aller Messgeraete im Zeitverlauf" },
+            { id: "chartBetaBar",      titel: "Beta-Dosisrate - Geraetevergleich",  einheit: "mSv/h", beschreibung: "Aktueller Beta-Dosisratenwert je Geraet (letzter Messpunkt)" },
+            { id: "chartGammaVerlauf", titel: "Gamma-Dosisrate - Verlauf",          einheit: "mSv/h", beschreibung: "Aktuelle Gamma-Dosisrate aller Messgeraete im Zeitverlauf" },
+            { id: "chartGammaBar",     titel: "Gamma-Dosisrate - Geraetevergleich", einheit: "mSv/h", beschreibung: "Aktueller Gamma-Dosisratenwert je Geraet (letzter Messpunkt)" },
         ];
 
         for (let di = 0; di < diagramme.length; di++) {

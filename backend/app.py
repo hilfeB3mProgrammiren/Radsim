@@ -7,7 +7,7 @@ from flask import Flask, render_template, request, jsonify
 from flask_socketio import SocketIO
 from flask_login import LoginManager, login_required, current_user
 from auth import auth
-from database import init_db, get_db
+from database import init_db, get_db, close_db
 from users import get_user_by_id
 
 init_db()
@@ -15,9 +15,11 @@ init_db()
 app = Flask(__name__, template_folder="../frontend/templates", static_folder="../frontend/static")
 app.secret_key = "super-secret-key"
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
-app.config["SESSION_COOKIE_SECURE"]   = False  # kein HTTPS nötig im LAN
+app.config["SESSION_COOKIE_SECURE"]   = False
 
 socketio = SocketIO(app, async_mode="eventlet", cors_allowed_origins="*")
+
+app.teardown_appcontext(close_db)
 
 login_manager = LoginManager()
 login_manager.login_view = "auth.login"
@@ -33,10 +35,13 @@ from flask_socketio import emit
 
 @socketio.on("connect")
 def on_connect():
-    """Wenn ein Browser sich verbindet, aktuelle Messwerte sofort schicken"""
     db = get_db()
     messungen = db.execute("""
-        SELECT m.id, m.geraet_id, m.cps, m.dosis, g.gesamtdosis
+        SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
+               m.cps_alpha, m.cps_beta, m.cps_gamma,
+               m.dosis_alpha, m.dosis_beta,
+               g.gesamtdosis, g.gesamtdosis_alpha, g.gesamtdosis_beta,
+               g.akku, g.status, g.letzter_kontakt
         FROM messungen m
         JOIN geraete g ON g.id = m.geraet_id
         INNER JOIN (
@@ -48,23 +53,26 @@ def on_connect():
 
     for m in messungen:
         emit("measurement", {
-            "id":          m["geraet_id"],
-            "cps":         m["cps"],
-            "gesamtdosis": m["gesamtdosis"]
+            "id":                 m["geraet_id"],
+            "cps":                m["cps"],
+            "cps_alpha":          m["cps_alpha"],
+            "cps_beta":           m["cps_beta"],
+            "cps_gamma":          m["cps_gamma"],
+            "gesamtdosis":        m["gesamtdosis"],
+            "gesamtdosis_alpha":  m["gesamtdosis_alpha"],
+            "gesamtdosis_beta":   m["gesamtdosis_beta"],
+            "akku":               m["akku"],
+            "status":             m["status"],
+            "timestamp":          str(m["timestamp"]),
         })
 
 # --------------------
-# Messdaten Watcher
-# --------------------
-# --------------------
-# Messdaten Watcher
+# Messdaten Watcher (Fallback falls HTTP-Push fehlschlägt)
 # --------------------
 def messdaten_watcher():
-    """Läuft im Hintergrund, prüft jede Sekunde auf neue Messwerte"""
     import sqlite3 as _sqlite3
     import os
 
-    # DB-Pfad ermitteln – versucht DB_PATH aus database.py, sonst Fallback
     try:
         from database import DB_PATH
     except ImportError:
@@ -75,13 +83,17 @@ def messdaten_watcher():
 
     while True:
         try:
-            # Eigene Verbindung – kein flask.g, kein Request-Context nötig
             conn = _sqlite3.connect(DB_PATH)
             conn.row_factory = _sqlite3.Row
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA busy_timeout=5000")
 
             neueste = conn.execute("""
                 SELECT m.id, m.geraet_id, m.cps, m.dosis, m.timestamp,
-                       g.gesamtdosis
+                       m.cps_alpha, m.cps_beta, m.cps_gamma,
+                       m.dosis_alpha, m.dosis_beta,
+                       g.gesamtdosis, g.gesamtdosis_alpha, g.gesamtdosis_beta,
+                       g.akku, g.status, g.letzter_kontakt
                 FROM messungen m
                 JOIN geraete g ON g.id = m.geraet_id
                 INNER JOIN (
@@ -97,16 +109,48 @@ def messdaten_watcher():
                 if letzte_ids.get(gid) != m["id"]:
                     letzte_ids[gid] = m["id"]
                     socketio.emit("measurement", {
-                        "id":          gid,
-                        "cps":         m["cps"],
-                        "gesamtdosis": m["gesamtdosis"],
-                        "timestamp":   str(m["timestamp"])
+                        "id":                gid,
+                        "cps":               m["cps"],
+                        "cps_alpha":         m["cps_alpha"],
+                        "cps_beta":          m["cps_beta"],
+                        "cps_gamma":         m["cps_gamma"],
+                        "gesamtdosis":       m["gesamtdosis"],
+                        "gesamtdosis_alpha": m["gesamtdosis_alpha"],
+                        "gesamtdosis_beta":  m["gesamtdosis_beta"],
+                        "akku":              m["akku"],
+                        "status":            m["status"],
+                        "timestamp":         str(m["timestamp"]),
                     })
 
         except Exception as e:
             print(f"[Watcher] Fehler: {e}")
 
-        socketio.sleep(1)  # eventlet-freundliches sleep statt time.sleep
+        socketio.sleep(1)
+
+# --------------------
+# Interne Route für mqtt_backend → sofortiger SocketIO-Emit
+# --------------------
+
+@app.route("/internal/measurement", methods=["POST"])
+def internal_measurement():
+    data = request.get_json()
+    if not data:
+        return "", 400
+    # Echte Gesamtdosis aus geraete-Tabelle holen (nicht den aktuellen Messwert)
+    geraet_id = data.get("id")
+    if geraet_id:
+        db = get_db()
+        g = db.execute(
+            "SELECT gesamtdosis, gesamtdosis_alpha, gesamtdosis_beta FROM geraete WHERE id = ?",
+            (geraet_id,)
+        ).fetchone()
+        if g:
+            data["gesamtdosis"]       = g["gesamtdosis"]       or 0.0
+            data["gesamtdosis_alpha"] = g["gesamtdosis_alpha"] or 0.0
+            data["gesamtdosis_beta"]  = g["gesamtdosis_beta"]  or 0.0
+    payload = {k: v for k, v in data.items() if v is not None}
+    socketio.emit("measurement", payload)
+    return "", 200
 
 # --------------------
 # Routes
@@ -166,14 +210,12 @@ def update_device(geraet_id):
 
 @app.route("/measurements/history")
 def measurements_history():
-    """Messverlauf für alle Geräte einer Übung (oder aktiver Übung)"""
     uebung_id = request.args.get("uebung_id", type=int)
     geraet_id = request.args.get("geraet_id", type=int)
     limit     = request.args.get("limit", 100, type=int)
 
     db = get_db()
 
-    # Übung bestimmen
     if not uebung_id:
         u = db.execute("SELECT id FROM uebungen WHERE status = 'aktiv' LIMIT 1").fetchone()
         uebung_id = u["id"] if u else None
@@ -183,7 +225,8 @@ def measurements_history():
 
     if geraet_id:
         rows = db.execute("""
-            SELECT m.timestamp, m.cps, m.dosis, m.geraet_id, g.name AS geraet_name
+            SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
+                   m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
             FROM messungen m
             JOIN geraete g ON g.id = m.geraet_id
             WHERE m.uebung_id = ? AND m.geraet_id = ?
@@ -192,7 +235,8 @@ def measurements_history():
         """, (uebung_id, geraet_id, limit)).fetchall()
     else:
         rows = db.execute("""
-            SELECT m.timestamp, m.cps, m.dosis, m.geraet_id, g.name AS geraet_name
+            SELECT m.timestamp, m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
+                   m.dosis, m.dosis_alpha, m.dosis_beta, m.geraet_id, g.name AS geraet_name
             FROM messungen m
             JOIN geraete g ON g.id = m.geraet_id
             WHERE m.uebung_id = ?
@@ -204,7 +248,6 @@ def measurements_history():
 
 @app.route("/uebungen/liste")
 def uebungen_liste():
-    """Alle Übungen mit Messgeräten für Diagramm-Auswahl"""
     db = get_db()
     uebungen = db.execute("SELECT id, name, status FROM uebungen ORDER BY erstellt_am DESC").fetchall()
     result = []
@@ -219,11 +262,15 @@ def uebungen_liste():
 
 @app.route("/measurements/latest")
 def measurements_latest():
-    """Gibt den letzten Messwert pro Gerät zurück"""
     db = get_db()
     rows = db.execute("""
-        SELECT m.geraet_id AS id, m.cps, m.dosis AS gesamtdosis
+        SELECT m.geraet_id AS id,
+               m.cps, m.cps_alpha, m.cps_beta, m.cps_gamma,
+               m.dosis AS gesamtdosis, m.dosis_alpha, m.dosis_beta,
+               g.gesamtdosis_alpha, g.gesamtdosis_beta,
+               g.akku, g.status, g.letzter_kontakt
         FROM messungen m
+        JOIN geraete g ON g.id = m.geraet_id
         INNER JOIN (
             SELECT geraet_id, MAX(timestamp) AS max_ts
             FROM messungen
@@ -239,7 +286,6 @@ def devices_ohne_uebung():
     uebung_id = request.args.get("uebung_id", type=int)
     db        = get_db()
 
-    # Alle Geräte aus DB holen die NICHT bereits in der Ziel-Übung sind
     if uebung_id:
         if typ:
             rows = db.execute(
@@ -252,15 +298,12 @@ def devices_ohne_uebung():
                 (uebung_id,)
             ).fetchall()
     else:
-        # Fallback: alle ohne Übung
         if typ:
             rows = db.execute(
                 "SELECT * FROM geraete WHERE uebung_id IS NULL AND typ = ?", (typ,)
             ).fetchall()
         else:
-            rows = db.execute(
-                "SELECT * FROM geraete WHERE uebung_id IS NULL"
-            ).fetchall()
+            rows = db.execute("SELECT * FROM geraete WHERE uebung_id IS NULL").fetchall()
 
     return jsonify([dict(r) for r in rows])
 
@@ -268,13 +311,9 @@ def devices_ohne_uebung():
 @login_required
 def add_to_uebung(geraet_id):
     db = get_db()
-    uebung = db.execute(
-        "SELECT id FROM uebungen WHERE status = 'aktiv' LIMIT 1"
-    ).fetchone()
+    uebung = db.execute("SELECT id FROM uebungen WHERE status = 'aktiv' LIMIT 1").fetchone()
     uebung_id = uebung["id"] if uebung else None
-    db.execute(
-        "UPDATE geraete SET uebung_id = ? WHERE id = ?", (uebung_id, geraet_id)
-    )
+    db.execute("UPDATE geraete SET uebung_id = ? WHERE id = ?", (uebung_id, geraet_id))
     db.commit()
     geraet = dict(db.execute("SELECT * FROM geraete WHERE id = ?", (geraet_id,)).fetchone())
     socketio.emit("new_device", geraet)
@@ -284,7 +323,6 @@ def add_to_uebung(geraet_id):
 @login_required
 def delete_device(geraet_id):
     db = get_db()
-    # Zuerst zugehörige Messungen und Konfigurationen löschen
     db.execute("DELETE FROM messungen WHERE geraet_id = ?", (geraet_id,))
     db.execute("DELETE FROM konfiguration WHERE geraet_id = ?", (geraet_id,))
     db.execute("DELETE FROM geraete WHERE id = ?", (geraet_id,))
@@ -305,24 +343,24 @@ def remove_from_uebung(geraet_id):
 @login_required
 def reset_dosis(geraet_id):
     db = get_db()
-    db.execute("UPDATE geraete SET gesamtdosis = 0.0 WHERE id = ?", (geraet_id,))
+    db.execute(
+        """UPDATE geraete
+           SET gesamtdosis = 0.0, gesamtdosis_alpha = 0.0, gesamtdosis_beta = 0.0
+           WHERE id = ?""",
+        (geraet_id,)
+    )
     db.commit()
-    socketio.emit("device_updated", {"id": geraet_id, "gesamtdosis": 0.0})
+    socketio.emit("device_updated", {
+        "id":                geraet_id,
+        "gesamtdosis":       0.0,
+        "gesamtdosis_alpha": 0.0,
+        "gesamtdosis_beta":  0.0,
+    })
     return "", 200
-
-
-# --------------------
-# Offset-Steuerung für Messgeräte
-# --------------------
 
 @app.route("/device/<int:geraet_id>/offset", methods=["POST"])
 @login_required
 def set_offset(geraet_id):
-    """
-    Setzt Offset-Werte für ein Messgerät und sendet sie per MQTT.
-    Body: { "offset_alpha": 0.5, "offset_beta": 0.0, "offset_gamma": 1.2, "reset": false }
-    Die Offset-Werte nutzen dieselbe Einheit wie die Quellen-Stärken (mSv/h).
-    """
     import json as _json
     data = request.get_json()
     if not data:
@@ -342,7 +380,6 @@ def set_offset(geraet_id):
 
     mac = geraet["mac_adresse"]
 
-    # Werte in DB speichern
     db.execute(
         """UPDATE geraete
            SET offset_alpha = ?, offset_beta = ?, offset_gamma = ?, offset_reset = ?
@@ -351,7 +388,6 @@ def set_offset(geraet_id):
     )
     db.commit()
 
-    # Per MQTT senden (wenn MAC bekannt und mqtt_backend läuft)
     mqtt_ok = False
     if mac:
         try:
@@ -374,7 +410,6 @@ def set_offset(geraet_id):
         except Exception as e:
             print(f"[OFFSET] MQTT-Fehler: {e}")
 
-    # Socket-Event damit die UI sofort aktualisiert wird
     socketio.emit("device_updated", {
         "id":           geraet_id,
         "offset_alpha": offset_alpha,
@@ -395,11 +430,9 @@ def set_offset(geraet_id):
         }
     }), 200
 
-
 @app.route("/messgeraete/offsets")
 @login_required
 def get_messgeraete_offsets():
-    """Alle Messgeräte mit aktuellen Offset-Werten (für den Offset-Tab)."""
     db = get_db()
     rows = db.execute(
         """SELECT id, name, mac_adresse, status, akku, letzter_kontakt,
@@ -409,7 +442,6 @@ def get_messgeraete_offsets():
            ORDER BY name"""
     ).fetchall()
     return jsonify([dict(r) for r in rows])
-
 
 # --------------------
 # Übungen Routes
@@ -443,7 +475,6 @@ def create_uebung():
         return "Name fehlt", 400
 
     db = get_db()
-    # Falls neue Übung aktiv → alle anderen deaktivieren
     if status == "aktiv":
         db.execute("UPDATE uebungen SET status = 'abgeschlossen' WHERE status = 'aktiv'")
 
@@ -472,7 +503,6 @@ def get_uebung(uebung_id):
 @login_required
 def uebung_aktivieren(uebung_id):
     db = get_db()
-    # Alle anderen beenden
     db.execute("UPDATE uebungen SET status = 'abgeschlossen' WHERE status = 'aktiv'")
     db.execute("UPDATE uebungen SET status = 'aktiv', start_zeit = CURRENT_TIMESTAMP WHERE id = ?", (uebung_id,))
     db.commit()
@@ -496,7 +526,6 @@ def uebung_beenden(uebung_id):
 @login_required
 def delete_uebung(uebung_id):
     db = get_db()
-    # Geräte aus Übung lösen (nicht löschen)
     db.execute("UPDATE geraete SET uebung_id = NULL WHERE uebung_id = ?", (uebung_id,))
     db.execute("DELETE FROM uebungen WHERE id = ?", (uebung_id,))
     db.commit()
@@ -516,9 +545,10 @@ def add_to_specific_uebung(geraet_id, uebung_id):
 # --------------------
 # Start
 # --------------------
+socketio.start_background_task(messdaten_watcher)
+print("Messdaten-Watcher gestartet")
+
 if __name__ == "__main__":
-    socketio.start_background_task(messdaten_watcher)
-    print("Messdaten-Watcher gestartet")
     print("=" * 45)
     print("  Radsim läuft auf http://0.0.0.0:5000")
     print("  Warte auf Verbindungen... (Ctrl+C zum Beenden)")

@@ -62,14 +62,33 @@
              data-mcu="{{ d.mac_adresse or '' }}"
              data-status="{{ d.status or '' }}"
              data-akku="{{ d.akku or '' }}"
-             data-gesamtdosis="{{ d.gesamtdosis }}">
+             data-gesamtdosis="{{ d.gesamtdosis }}"
+             data-gesamtdosis-alpha="{{ d.gesamtdosis_alpha or 0 }}"
+             data-gesamtdosis-beta="{{ d.gesamtdosis_beta or 0 }}"
+             data-offset-alpha="{{ d.offset_alpha or 0 }}"
+             data-offset-beta="{{ d.offset_beta or 0 }}"
+             data-offset-gamma="{{ d.offset_gamma or 0 }}">
             <div class="device-icon">
                 <img src="/static/img/geiger_icon.png" alt="{{ d.name }}">
             </div>
             <div class="device-name">{{ d.name }}</div>
-            <div class="device-doses">
-                <div class="current-dose">— mSv/h</div>
-                <div class="total-dose">{{ "%.2f"|format(d.gesamtdosis) }} mSv</div>
+            <div class="device-source-info">
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">α Alpha</span>
+                    <span class="cps-alpha staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">β Beta</span>
+                    <span class="cps-beta staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile">
+                    <span class="strahlungsart">γ Gamma</span>
+                    <span class="cps-gamma staerke-wert">— mSv/h</span>
+                </div>
+                <div class="strahlung-zeile strahlung-zeile-gesamt">
+                    <span class="strahlungsart" style="color:#888;">Σγ Gesamtdosis</span>
+                    <span class="total-dose staerke-wert">{{ "%.2f"|format(d.gesamtdosis) }} mSv</span>
+                </div>
             </div>
         </div>
         {% endif %}
@@ -203,41 +222,66 @@
 <!-- Diagramme -->
 <div class="live-charts-grid">
 
-    <div class="live-chart-card live-chart-wide">
+    <!-- α Alpha -->
+    <div class="live-chart-card live-chart-wide" style="border-top: 3px solid #e74c3c;">
         <div class="live-chart-header">
-            <span class="live-chart-title">Aktuelle Dosisrate (mSv/h)</span>
-            <span class="live-chart-sub" id="liveCpsSubtitle"></span>
+            <span class="live-chart-title" style="color:#e74c3c;">α Alpha — Dosisrate Verlauf (mSv/h)</span>
         </div>
         <div class="live-chart-wrap">
-            <canvas id="chartCpsVerlauf"></canvas>
+            <canvas id="chartAlphaVerlauf"></canvas>
         </div>
     </div>
 
-    <div class="live-chart-card live-chart-wide">
+    <div class="live-chart-card" style="border-top: 3px solid #e74c3c;">
         <div class="live-chart-header">
-            <span class="live-chart-title">Gesamtdosis (mSv)</span>
-            <span class="live-chart-sub" id="liveDosisSubtitle"></span>
+            <span class="live-chart-title" style="color:#e74c3c;">α Alpha — Vergleich (mSv/h)</span>
         </div>
         <div class="live-chart-wrap">
-            <canvas id="chartDosisVerlauf"></canvas>
+            <canvas id="chartAlphaBar"></canvas>
         </div>
     </div>
 
-    <div class="live-chart-card">
+    <!-- β Beta -->
+    <div class="live-chart-card live-chart-wide" style="border-top: 3px solid #e67e22;">
         <div class="live-chart-header">
-            <span class="live-chart-title">Aktuelle Dosisraten – Vergleich</span>
+            <span class="live-chart-title" style="color:#e67e22;">β Beta — Dosisrate Verlauf (mSv/h)</span>
         </div>
         <div class="live-chart-wrap">
-            <canvas id="chartCpsBar"></canvas>
+            <canvas id="chartBetaVerlauf"></canvas>
         </div>
     </div>
 
-    <div class="live-chart-card">
+    <div class="live-chart-card" style="border-top: 3px solid #e67e22;">
         <div class="live-chart-header">
-            <span class="live-chart-title">Gesamtdosen – Vergleich</span>
+            <span class="live-chart-title" style="color:#e67e22;">β Beta — Vergleich (mSv/h)</span>
         </div>
         <div class="live-chart-wrap">
-            <canvas id="chartDosisBar"></canvas>
+            <canvas id="chartBetaBar"></canvas>
+        </div>
+    </div>
+
+    <!-- γ Gamma -->
+    <div class="live-chart-card live-chart-wide" style="border-top: 3px solid #27ae60;">
+        <div class="live-chart-header">
+            <span class="live-chart-title" style="color:#27ae60;">γ Gamma — Dosisrate Verlauf (mSv/h)</span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartGammaVerlauf"></canvas>
+        </div>
+    </div>
+
+    <div class="live-chart-card" style="border-top: 3px solid #27ae60;">
+        <div class="live-chart-header">
+            <span class="live-chart-title" style="color:#27ae60;">γ Gamma — Vergleich (mSv/h)</span>
+        </div>
+        <div class="live-chart-wrap">
+            <canvas id="chartGammaBar"></canvas>
+        </div>
+    </div>
+    <div class="live-chart-box" style="grid-column: span 2;">
+        <div class="live-chart-inner">
+            <span class="live-chart-title" style="color:#8e44ad;">Σγ Gesamtdosis Gamma — Verlauf (mSv)</span>
+            <canvas id="chartGesamtVerlauf"></canvas>
         </div>
     </div>
 
@@ -345,16 +389,23 @@
 
                 <!-- Messgerät -->
                 <div id="detailMessgeraet" style="display:none;">
-                    <h3>Messwerte</h3>
+                    <h3>Aktuelle Dosisrate</h3>
                     <div class="detail-feld">
-                        <label>Aktuelle Dosis</label>
-                        <span id="detailCurrentDose" class="detail-wert detail-dose">— mSv/h</span>
+                        <label>α Alpha</label>
+                        <span id="detailCpsAlpha" class="detail-wert detail-dose">— mSv/h</span>
                     </div>
                     <div class="detail-feld">
-                        <label>Gesamtdosis <span style="font-weight:normal; color:#888;">(nur γ Gamma)</span></label>
-                        <span id="detailTotalDose" class="detail-wert detail-dose"></span>
-                        <input type="number" id="detailTotalDoseInput" class="detail-input"
-                               step="0.01" min="0" style="display:none; margin-top:6px;">
+                        <label>β Beta</label>
+                        <span id="detailCpsBeta" class="detail-wert detail-dose">— mSv/h</span>
+                    </div>
+                    <div class="detail-feld">
+                        <label>γ Gamma</label>
+                        <span id="detailCpsGamma" class="detail-wert detail-dose">— mSv/h</span>
+                    </div>
+                    <h3 style="margin-top:16px;">Gesamtdosis γ Gamma</h3>
+                    <div class="detail-feld">
+                        <label>γ Gamma</label>
+                        <span id="detailTotalDose" class="detail-wert detail-dose">— mSv</span>
                     </div>
                     {% if current_user.is_authenticated %}
 

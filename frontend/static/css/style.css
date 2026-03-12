@@ -463,11 +463,11 @@ main {
    DOSISFARBEN
 ========================================================= */
 
-.dose-green  { background-color: #0ce61a; }
-.dose-yellow { background-color: #f5c424; }
-.dose-orange { background-color: #f06e1d; }
-.dose-red    { background-color: #bb0413; color: #fff; }
-.dose-purple { background-color: #822b5e; color: #fff; }
+.dose-green,  .staerke-wert.dose-green  { background-color: #0ce61a; color: #1a4a1a; }
+.dose-yellow, .staerke-wert.dose-yellow { background-color: #f5c424; color: #4a3a00; }
+.dose-orange, .staerke-wert.dose-orange { background-color: #f06e1d; color: #fff; }
+.dose-red,    .staerke-wert.dose-red    { background-color: #bb0413; color: #fff; }
+.dose-purple, .staerke-wert.dose-purple { background-color: #822b5e; color: #fff; }
 
 /* =========================================================
    AKTIVE ÜBUNG BADGE
@@ -1589,3 +1589,10 @@ main {
     display: none;
 }
 .offset-feedback.err { color: #e74c3c; }
+
+/* Gesamtdosis-Zeile auf Messgeräte-Karten */
+.strahlung-zeile-gesamt {
+    margin-top: 4px;
+    border-top: 1px solid #e0e0e0;
+    padding-top: 4px;
+}

@@ -18,75 +18,48 @@ Messgeräte/Zähler (ESP32 Zähler) mit der radsim.db Datenbank.
 │  ZÄHLER  (typ = 'messgeraet')                                           │
 │  Server → Zähler   devices/cmd/<mac>                                    │
 │    {                                                                    │
-│      "offset_alpha": 0.0,   ← Alpha-Offset   (float, mSv/h)           │
-│      "offset_beta":  0.0,   ← Beta-Offset    (float, mSv/h)           │
-│      "offset_gamma": 0.0,   ← Gamma-Offset   (float, mSv/h)           │
-│      "reset":  false,       ← Reset-Variable (bool)                    │
-│      "status": "aktiv"      ← Statusvariable                           │
+│      "offset_alpha": 0.0,  ← Offset Alpha (float, mSv/h)              │
+│      "offset_beta":  0.0,  ← Offset Beta  (float, mSv/h)              │
+│      "offset_gamma": 0.0,  ← Offset Gamma (float, mSv/h)              │
+│      "reset":  false,      ← Gesamtdosis-Reset (bool)                 │
+│      "status": "aktiv"     ← Statusvariable                            │
 │    }                                                                    │
 │  Zähler → Server   devices/data                                         │
 │    {                                                                    │
-│      "mac":   "AA:BB:CC:DD:EE:FF",                                     │
-│      "cps":   12.5,     ← Zählrate (Impulse/s)                         │
-│      "dosis": 3.7       ← kumulierte Gesamtdosis (mSv)                 │
+│      "mac":        "AA:BB:CC:DD:EE:FF",                                │
+│      "cps_alpha":  1.2,   ← Aktuelle Alpha-Dosisrate  (mSv/h)         │
+│      "cps_beta":   0.5,   ← Aktuelle Beta-Dosisrate   (mSv/h)         │
+│      "cps_gamma":  3.1,   ← Aktuelle Gamma-Dosisrate  (mSv/h)         │
+│      "dosis_alpha": 0.04, ← Kum. Alpha-Dosis          (mSv)           │
+│      "dosis_beta":  0.01, ← Kum. Beta-Dosis           (mSv)           │
+│      "dosis":       0.12  ← Kum. Gamma-Dosis          (mSv)           │
 │    }                                                                    │
+│  Rückwärtskompatibel: "cps"/"dosis" allein → wird als Gamma gewertet   │
 └─────────────────────────────────────────────────────────────────────────┘
 
-HTTP-API (für Website-Integration):
-  POST /api/offset
-    Body (JSON):
-      {
-        "geraet_id":    5,
-        "offset_alpha": 0.5,
-        "offset_beta":  0.0,
-        "offset_gamma": 1.2,
-        "reset":        false
-      }
-    → Speichert Werte in DB und sendet sofort per MQTT an das Gerät.
-    Response: { "ok": true, "mac": "AA:...", "sent": {...} }
-
-  GET /api/messgeraete
-    → Gibt alle Messgeräte mit aktuellen Offset-Werten zurück.
-
-  POST /api/reset/<geraet_id>
-    → Setzt offset_reset=1 in DB und sendet Reset-Befehl per MQTT.
-      Nach dem Senden wird offset_reset automatisch auf 0 zurückgesetzt.
-
 Voraussetzungen:
-    pip install paho-mqtt flask flask-cors
+    pip install paho-mqtt
 
 Starten:
     python mqtt_backend.py
-──────────────────────────────────────────────────────────────────────────────
 """
 
 import json
 import sqlite3
-import threading
+import os
+import requests
 import paho.mqtt.client as mqtt
 from datetime import datetime
-from flask import Flask, request, jsonify
-from flask_cors import CORS
 
 # ── Konfiguration ──────────────────────────────────────────────────────────
-MQTT_BROKER           = "localhost"      # IP/Hostname des MQTT-Brokers
-MQTT_PORT             = 1883
+MQTT_BROKER          = "localhost"       # IP/Hostname des MQTT-Brokers
+MQTT_PORT            = 1883
 MQTT_TOPIC_ZAEHLER_IN = "devices/data"  # Zähler → Server (Messdaten)
 # Server → Zähler:   devices/cmd/<mac>
 # Server → Quelle:   sources/cmd/<mac>
-DB_FILE               = "radsim.db"
-HTTP_HOST             = "0.0.0.0"
-HTTP_PORT             = 5001            # Flask-HTTP-API-Port
+DB_FILE              = "radsim.db"
 # ──────────────────────────────────────────────────────────────────────────
 
-app = Flask(__name__)
-CORS(app)  # Website darf Cross-Origin anfragen
-
-# Globaler MQTT-Client (wird in main() gesetzt, damit HTTP-Handler ihn nutzen können)
-_mqtt_client: mqtt.Client | None = None
-
-
-# ── Datenbank-Hilfsfunktionen ──────────────────────────────────────────────
 
 def get_db():
     conn = sqlite3.connect(DB_FILE)
@@ -98,13 +71,6 @@ def geraet_by_mac(c, mac: str):
     """Gerät anhand MAC-Adresse aus DB holen."""
     return c.execute(
         "SELECT * FROM geraete WHERE mac_adresse = ?", (mac,)
-    ).fetchone()
-
-
-def geraet_by_id(c, geraet_id: int):
-    """Gerät anhand ID aus DB holen."""
-    return c.execute(
-        "SELECT * FROM geraete WHERE id = ?", (geraet_id,)
     ).fetchone()
 
 
@@ -121,6 +87,7 @@ def aktive_uebung_id(c):
 def on_connect(client, userdata, flags, rc):
     if rc == 0:
         print(f"[MQTT] Verbunden mit Broker {MQTT_BROKER}:{MQTT_PORT}")
+        # Nur Zähler-Daten abonnieren – Quellen senden nichts an den Server
         client.subscribe(MQTT_TOPIC_ZAEHLER_IN)
         print(f"[MQTT] Abonniert: {MQTT_TOPIC_ZAEHLER_IN}  (Zähler → Server)")
     else:
@@ -128,16 +95,27 @@ def on_connect(client, userdata, flags, rc):
 
 
 def on_message(client, userdata, msg):
-    """Empfängt Messdaten vom Zähler (Messgerät)."""
+    """
+    Empfängt Messdaten vom Zähler. Erwartet alle drei Strahlungstypen:
+      { "mac": "...", "cps_alpha": 1.2, "cps_beta": 0.5, "cps_gamma": 3.1,
+        "dosis_alpha": 0.04, "dosis_beta": 0.01, "dosis": 0.12 }
+    Rückwärtskompatibel: "cps"/"dosis" allein → wird als Gamma interpretiert.
+    """
     try:
-        data  = json.loads(msg.payload.decode())
-        mac   = data.get("mac", "").strip().upper()
-        cps   = float(data.get("cps",   0.0))
-        dosis = float(data.get("dosis", 0.0))
+        data = json.loads(msg.payload.decode())
+        mac  = data.get("mac", "").strip().upper()
 
         if not mac:
             print("[WARN] Nachricht ohne MAC ignoriert")
             return
+
+        cps_alpha   = float(data.get("cps_alpha",   data.get("cps",   0.0)))
+        cps_beta    = float(data.get("cps_beta",    0.0))
+        cps_gamma   = float(data.get("cps_gamma",   data.get("cps",   0.0)))
+        dosis_alpha = float(data.get("dosis_alpha", 0.0))
+        dosis_beta  = float(data.get("dosis_beta",  0.0))
+        dosis_gamma = float(data.get("total_gamma_dose", data.get("dosis", data.get("dosis_gamma", 0.0))))
+        cps_gesamt  = round(cps_alpha + cps_beta + cps_gamma, 4)
 
         conn = get_db()
         c    = conn.cursor()
@@ -145,13 +123,13 @@ def on_message(client, userdata, msg):
         geraet = geraet_by_mac(c, mac)
 
         if not geraet:
-            # Unbekanntes Gerät → automatisch als Messgerät registrieren
             uebung_id = aktive_uebung_id(c)
             c.execute(
                 """INSERT INTO geraete
-                   (name, typ, mac_adresse, status, gesamtdosis, uebung_id)
-                   VALUES (?, 'messgeraet', ?, 'aktiv', ?, ?)""",
-                (f"Zähler {mac[-8:]}", mac, dosis, uebung_id)
+                   (name, typ, mac_adresse, status,
+                    gesamtdosis, gesamtdosis_alpha, gesamtdosis_beta, uebung_id)
+                   VALUES (?, 'messgeraet', ?, 'aktiv', ?, ?, ?, ?)""",
+                (f"Zähler {mac[-8:]}", mac, dosis_gamma, dosis_alpha, dosis_beta, uebung_id)
             )
             conn.commit()
             geraet = geraet_by_mac(c, mac)
@@ -160,34 +138,59 @@ def on_message(client, userdata, msg):
         geraet_id = geraet["id"]
         uebung_id = geraet["uebung_id"]
 
-        # Messung speichern
+        # Messung speichern (alle drei Typen)
         c.execute(
-            """INSERT INTO messungen (geraet_id, uebung_id, cps, dosis, timestamp)
-               VALUES (?, ?, ?, ?, ?)""",
-            (geraet_id, uebung_id, cps, dosis,
+            """INSERT INTO messungen
+               (geraet_id, uebung_id, cps, dosis,
+                cps_alpha, cps_beta, cps_gamma,
+                dosis_alpha, dosis_beta, timestamp)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (geraet_id, uebung_id, cps_gesamt, dosis_gamma,
+             cps_alpha, cps_beta, cps_gamma,
+             dosis_alpha, dosis_beta,
              datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
         )
 
-        # Gesamtdosis + letzter_kontakt aktualisieren
+        # Gesamtdosis aller Typen + letzter_kontakt aktualisieren
         c.execute(
             """UPDATE geraete
-               SET gesamtdosis = ?, letzter_kontakt = CURRENT_TIMESTAMP
+               SET gesamtdosis       = ?,
+                   gesamtdosis_alpha = ?,
+                   gesamtdosis_beta  = ?,
+                   letzter_kontakt   = CURRENT_TIMESTAMP
                WHERE id = ?""",
-            (dosis, geraet_id)
+            (dosis_gamma, dosis_alpha, dosis_beta, geraet_id)
         )
 
-        # Falls offset_reset=1 gesetzt war: nach erfolgtem Kontakt zurücksetzen
         if geraet["offset_reset"]:
-            c.execute(
-                "UPDATE geraete SET offset_reset = 0 WHERE id = ?",
-                (geraet_id,)
-            )
-            print(f"[DB] offset_reset für Gerät {geraet_id} zurückgesetzt")
+            c.execute("UPDATE geraete SET offset_reset = 0 WHERE id = ?", (geraet_id,))
 
         conn.commit()
         conn.close()
 
-        print(f"[ZÄHLER] {mac} → cps={cps}, dosis={dosis} mSv (id={geraet_id})")
+        # Sofort per HTTP an Flask-SocketIO schicken (kein Watcher-Delay)
+        try:
+            requests.post("http://localhost:5000/internal/measurement", json={
+                "id":                geraet_id,
+                "cps":               cps_gesamt,
+                "cps_alpha":         cps_alpha,
+                "cps_beta":          cps_beta,
+                "cps_gamma":         cps_gamma,
+                "gesamtdosis":       dosis_gamma,
+                "gesamtdosis_alpha": dosis_alpha,
+                "gesamtdosis_beta":  dosis_beta,
+                "akku":              float(akku) if akku is not None else None,
+                "status":            str(status) if status is not None else None,
+                "timestamp":         datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            }, timeout=1)
+        except Exception:
+            pass  # Flask nicht erreichbar – kein Problem, Watcher springt ein
+
+        print(
+            f"[ZÄHLER] {mac} → "
+            f"α={cps_alpha} β={cps_beta} γ={cps_gamma} mSv/h | "
+            f"dosisγ={dosis_gamma} mSv (id={geraet_id})"
+        )
 
     except json.JSONDecodeError:
         print(f"[WARN] Ungültiges JSON: {msg.payload}")
@@ -221,19 +224,14 @@ def send_zaehler_cmd(client, mac: str,
                      offset_alpha: float = 0.0,
                      offset_beta:  float = 0.0,
                      offset_gamma: float = 0.0,
-                     reset: bool         = False,
-                     status: str         = "aktiv"):
+                     reset: bool   = False,
+                     status: str   = "aktiv"):
     """
-    Sendet Offset-Steuerparameter an einen Zähler.
+    Sendet Steuerparameter an einen Zähler.
     Topic: devices/cmd/<MAC>
     Payload:
-        {
-          "offset_alpha": 0.0,
-          "offset_beta":  0.0,
-          "offset_gamma": 0.0,
-          "reset":        false,
-          "status":       "aktiv"
-        }
+        { "offset_alpha": 0.0, "offset_beta": 0.0, "offset_gamma": 0.0,
+          "reset": false, "status": "aktiv" }
     """
     payload = {
         "offset_alpha": round(float(offset_alpha), 3),
@@ -244,12 +242,7 @@ def send_zaehler_cmd(client, mac: str,
     }
     topic = f"devices/cmd/{mac.upper()}"
     client.publish(topic, json.dumps(payload), qos=1)
-    print(
-        f"[ZÄHLER→] {topic}  "
-        f"α_off={offset_alpha} β_off={offset_beta} γ_off={offset_gamma} "
-        f"reset={reset} status={status}"
-    )
-    return payload
+    print(f"[ZÄHLER→] {topic}  α={offset_alpha} β={offset_beta} γ={offset_gamma} reset={reset} status={status}")
 
 
 # ── DB-Sync: alle bekannten Quellen mit aktuellen Werten pushen ────────────
@@ -258,6 +251,7 @@ def sync_quellen(client):
     """
     Liest alle Quellen aus der DB und schickt deren aktuelle
     Alpha/Beta/Gamma-Werte per MQTT an die jeweiligen Geräte.
+    Nützlich beim Server-Start oder nach DB-Änderungen.
     """
     try:
         conn = get_db()
@@ -285,14 +279,14 @@ def sync_quellen(client):
 
 def sync_zaehler(client):
     """
-    Sendet aktuelle Offset-Werte und Status an alle bekannten Messgeräte.
-    Beim Start werden gespeicherte Offsets wiederhergestellt.
+    Sendet beim Server-Start die gespeicherten Offset-Werte an alle
+    bekannten Messgeräte, damit der Zähler nach Neustart korrekt konfiguriert ist.
     """
     try:
         conn = get_db()
         zaehler = conn.execute(
             """SELECT mac_adresse, status,
-                      offset_alpha, offset_beta, offset_gamma, offset_reset
+                      offset_alpha, offset_beta, offset_gamma
                FROM geraete
                WHERE typ = 'messgeraet' AND mac_adresse IS NOT NULL"""
         ).fetchall()
@@ -306,191 +300,26 @@ def sync_zaehler(client):
                     offset_alpha = z["offset_alpha"] or 0.0,
                     offset_beta  = z["offset_beta"]  or 0.0,
                     offset_gamma = z["offset_gamma"] or 0.0,
-                    reset        = bool(z["offset_reset"]),
-                    status       = z["status"]        or "aktiv",
+                    reset        = False,
+                    status       = z["status"] or "aktiv",
                 )
         print(f"[SYNC] {len(zaehler)} Zähler synchronisiert")
     except Exception as e:
         print(f"[FEHLER] sync_zaehler: {e}")
 
 
-# ── HTTP-API für Website ───────────────────────────────────────────────────
-
-@app.route("/api/messgeraete", methods=["GET"])
-def api_messgeraete():
-    """
-    Gibt alle Messgeräte mit aktuellen Offset-Werten zurück.
-    GET /api/messgeraete
-    """
-    try:
-        conn = get_db()
-        geraete = conn.execute(
-            """SELECT id, name, mac_adresse, status, akku,
-                      letzter_kontakt, gesamtdosis,
-                      offset_alpha, offset_beta, offset_gamma, offset_reset
-               FROM geraete
-               WHERE typ = 'messgeraet'
-               ORDER BY name"""
-        ).fetchall()
-        conn.close()
-
-        result = [dict(g) for g in geraete]
-        return jsonify({"ok": True, "geraete": result})
-    except Exception as e:
-        return jsonify({"ok": False, "fehler": str(e)}), 500
-
-
-@app.route("/api/offset", methods=["POST"])
-def api_set_offset():
-    """
-    Setzt Offset-Werte für ein Messgerät und sendet sie sofort per MQTT.
-
-    POST /api/offset
-    Body:
-    {
-        "geraet_id":    5,
-        "offset_alpha": 0.5,   ← mSv/h (gleiche Einheit wie Quellen-Stärken)
-        "offset_beta":  0.0,
-        "offset_gamma": 1.2,
-        "reset":        false  ← optional, default false
-    }
-    """
-    global _mqtt_client
-
-    if not _mqtt_client:
-        return jsonify({"ok": False, "fehler": "MQTT-Client nicht verfügbar"}), 503
-
-    body = request.get_json(force=True)
-    if not body:
-        return jsonify({"ok": False, "fehler": "Kein JSON-Body"}), 400
-
-    geraet_id    = body.get("geraet_id")
-    offset_alpha = float(body.get("offset_alpha", 0.0))
-    offset_beta  = float(body.get("offset_beta",  0.0))
-    offset_gamma = float(body.get("offset_gamma", 0.0))
-    reset        = bool(body.get("reset",         False))
-
-    if geraet_id is None:
-        return jsonify({"ok": False, "fehler": "geraet_id fehlt"}), 400
-
-    try:
-        conn = get_db()
-        c    = conn.cursor()
-
-        geraet = geraet_by_id(c, geraet_id)
-        if not geraet:
-            conn.close()
-            return jsonify({"ok": False, "fehler": f"Gerät {geraet_id} nicht gefunden"}), 404
-
-        if geraet["typ"] != "messgeraet":
-            conn.close()
-            return jsonify({"ok": False, "fehler": "Gerät ist kein Messgerät"}), 400
-
-        mac = geraet["mac_adresse"]
-        if not mac:
-            conn.close()
-            return jsonify({"ok": False, "fehler": "Gerät hat keine MAC-Adresse"}), 400
-
-        # Werte in DB speichern
-        c.execute(
-            """UPDATE geraete
-               SET offset_alpha = ?,
-                   offset_beta  = ?,
-                   offset_gamma = ?,
-                   offset_reset = ?
-               WHERE id = ?""",
-            (offset_alpha, offset_beta, offset_gamma, 1 if reset else 0, geraet_id)
-        )
-        conn.commit()
-        conn.close()
-
-        # Sofort per MQTT senden
-        sent = send_zaehler_cmd(
-            _mqtt_client,
-            mac          = mac,
-            offset_alpha = offset_alpha,
-            offset_beta  = offset_beta,
-            offset_gamma = offset_gamma,
-            reset        = reset,
-            status       = geraet["status"] or "aktiv",
-        )
-
-        return jsonify({
-            "ok":     True,
-            "mac":    mac,
-            "sent":   sent,
-        })
-
-    except Exception as e:
-        return jsonify({"ok": False, "fehler": str(e)}), 500
-
-
-@app.route("/api/reset/<int:geraet_id>", methods=["POST"])
-def api_reset_geraet(geraet_id: int):
-    """
-    Sendet einen Reset-Befehl an ein Messgerät (setzt Gesamtdosis zurück).
-    Der offset_reset-Flag wird in DB auf 1 gesetzt und nach Bestätigung
-    automatisch wieder auf 0 gesetzt (beim nächsten Dateneingang).
-
-    POST /api/reset/<geraet_id>
-    """
-    global _mqtt_client
-
-    if not _mqtt_client:
-        return jsonify({"ok": False, "fehler": "MQTT-Client nicht verfügbar"}), 503
-
-    try:
-        conn = get_db()
-        c    = conn.cursor()
-
-        geraet = geraet_by_id(c, geraet_id)
-        if not geraet:
-            conn.close()
-            return jsonify({"ok": False, "fehler": f"Gerät {geraet_id} nicht gefunden"}), 404
-
-        mac = geraet["mac_adresse"]
-        if not mac:
-            conn.close()
-            return jsonify({"ok": False, "fehler": "Gerät hat keine MAC-Adresse"}), 400
-
-        # Reset-Flag setzen
-        c.execute(
-            "UPDATE geraete SET offset_reset = 1 WHERE id = ?",
-            (geraet_id,)
-        )
-        conn.commit()
-        conn.close()
-
-        # Reset-Befehl senden (Offsets bleiben erhalten)
-        sent = send_zaehler_cmd(
-            _mqtt_client,
-            mac          = mac,
-            offset_alpha = float(geraet["offset_alpha"] or 0.0),
-            offset_beta  = float(geraet["offset_beta"]  or 0.0),
-            offset_gamma = float(geraet["offset_gamma"] or 0.0),
-            reset        = True,
-            status       = geraet["status"] or "aktiv",
-        )
-
-        return jsonify({"ok": True, "mac": mac, "sent": sent})
-
-    except Exception as e:
-        return jsonify({"ok": False, "fehler": str(e)}), 500
-
-
 # ── Client starten ─────────────────────────────────────────────────────────
 
-def start_http_server():
-    """Flask-HTTP-Server in eigenem Thread starten."""
-    print(f"[HTTP] API-Server läuft auf http://{HTTP_HOST}:{HTTP_PORT}")
-    app.run(host=HTTP_HOST, port=HTTP_PORT, use_reloader=False)
-
-
 def main():
-    global _mqtt_client
-
     client = mqtt.Client()
-    _mqtt_client = client
+    client.on_connect = on_connect
+    client.on_message = on_message
+
+    print(f"[MQTT] Verbinde mit {MQTT_BROKER}:{MQTT_PORT}...")
+    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
+
+    # Nach Verbindung alle bekannten Geräte mit aktuellen Werten versorgen
+    client.on_connect_ext = None  # wird nach on_connect aufgerufen
 
     def on_connect_with_sync(c, userdata, flags, rc):
         on_connect(c, userdata, flags, rc)
@@ -499,15 +328,6 @@ def main():
             sync_zaehler(c)
 
     client.on_connect = on_connect_with_sync
-    client.on_message = on_message
-
-    print(f"[MQTT] Verbinde mit {MQTT_BROKER}:{MQTT_PORT}...")
-    client.connect(MQTT_BROKER, MQTT_PORT, keepalive=60)
-
-    # HTTP-Server parallel starten
-    http_thread = threading.Thread(target=start_http_server, daemon=True)
-    http_thread.start()
-
     client.loop_forever()
 
 
