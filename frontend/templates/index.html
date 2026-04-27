@@ -1,3 +1,64 @@
+<!--
+==============================================================================
+Copyright (c) 2026, All rights reserved
+Internal Use Only
+
+FILE:        index.html
+PROJECT:     Radsim
+MODULE:      Frontend Template (Dashboard / UI Rendering)
+
+Description:
+    Haupt-Template der Radsim-Webanwendung.
+    Stellt das zentrale Dashboard inklusive Geräteübersicht,
+    Übungen-Verwaltung und Live-Messdaten dar.
+
+    Dieses Template nutzt Jinja2 zur serverseitigen Darstellung
+    und wird durch Flask gerendert.
+
+    Enthaltene Hauptbereiche:
+    - Navigation (Navbar mit Tabs & Auth-Bereich)
+    - Dashboard (Messgeräte & Strahlungsquellen)
+    - Übungen (Erstellen, Anzeigen, Aktivieren)
+    - Live-Messung (Diagramme & Statistiken)
+    - Modals (Login, Geräte, Übungen, Details)
+
+Features:
+    - Dynamische Anzeige basierend auf Login-Status
+    - Echtzeit-Daten via Socket.IO (Frontend JS)
+    - Interaktive Diagramme (Chart.js)
+    - PDF Export (jsPDF)
+    - Geräteverwaltung inkl. Offset-Steuerung
+
+Notes:
+    - Starke Kopplung an main.js (UI-Logik)
+    - Verwendet Flask-Login (current_user)
+    - Templates enthalten sowohl statische als auch dynamische Inhalte
+    - Viele UI-Elemente werden nachträglich per JS befüllt
+
+Dependencies:
+    - Flask (Backend Rendering)
+    - Jinja2 (Template Engine)
+    - Socket.IO (Realtime Kommunikation)
+    - Chart.js (Diagramme)
+    - jsPDF (Export-Funktion)
+
+Structure:
+    - Tabs werden über JS gesteuert (switchTab)
+    - Daten werden initial serverseitig gerendert
+    - Live-Daten werden clientseitig aktualisiert
+
+Known Limitations:
+    - Kein komponentenbasiertes Frontend (kein React/Vue)
+    - Teilweise Inline-Styles vorhanden
+    - Große Template-Datei → eingeschränkte Wartbarkeit
+    - Responsiveness nur begrenzt optimiert
+
+Revision History:
+    2026-03-18
+      DH   Initiale Version
+==============================================================================
+
+-->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -14,7 +75,7 @@
 <header class="navbar">
     <h1 class="logo">Radsim</h1>
 
-    <!-- Aktive Übung Badge -->
+    Aktive Übung Badge 
     <div class="aktive-uebung">
         {% if aktive_uebung %}
             <span class="uebung-badge aktiv">● {{ aktive_uebung.name }}</span>

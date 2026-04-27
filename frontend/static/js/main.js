@@ -1,3 +1,48 @@
+/*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        main.js
+* PROJECT:     Radsim
+* MODULE:      Frontend Logic / UI Interaction / Live Data Handling
+*
+* Description:
+*   Zentrale JavaScript-Datei für das Radsim-Frontend.
+*   Steuert die Benutzerinteraktion, Kommunikation mit dem Backend
+*   sowie die dynamische Aktualisierung der UI.
+*
+*   Kernfunktionen:
+*   - Socket.IO Verbindung (Live-Messdaten empfangen)
+*   - Dynamisches Rendern von Geräten und Übungen
+*   - Steuerung von Modals (Öffnen/Schließen/Validierung)
+*   - API-Kommunikation (Fetch/AJAX Requests)
+*   - Event-Handling (Buttons, Dropdowns, Tabs)
+*   - Chart-Updates für Live-Messungen
+*
+* Notes:
+*   - Nutzt WebSockets (Socket.IO) für Echtzeitdaten
+*   - Fallback über HTTP-Endpunkte vorhanden
+*   - Starke Kopplung an HTML-Struktur 
+*
+* Dependencies:
+*   - Socket.IO Client
+*   - Chart.js (für Diagramme)
+*   - Backend API (Flask)
+*
+* Naming Conventions:
+*   - camelCase für Variablen & Funktionen
+*   - Event-Handler beginnen mit "handle" oder "on"
+*   - UI-Update-Funktionen beginnen mit "update" oder "render"
+*
+* Design Principles:
+*   - Echtzeitfähigkeit (Live-Daten im Fokus)
+*   - Direkte, performante DOM-Updates
+*   - Klare Trennung von Daten und Darstellung (so gut es geht ohne Framework)
+*
+* Revision History:
+*   2026-03-18  DH   Initiale Version
+*
+*****************************************************************************/
 /* =========================================================
    GLOBALE VARIABLEN
 ========================================================= */
@@ -107,9 +152,9 @@ function updateDeviceCard(data) {
     }
 
     // Falls Detail-Modal für dieses Gerät offen ist – auch dort updaten
-    if (activeDeviceId == data.id) {
-        fillDetailModal(card);
-    }
+   if (activeDeviceId == data.id && !document.activeElement?.closest("#detailModal")) {
+    fillDetailModal(card);
+}
 }
 
 /* =========================================================

@@ -1,3 +1,55 @@
+/*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        style.css
+* PROJECT:     Radsim
+* MODULE:      Frontend Stylesheet (UI / Layout / Components)
+*
+* Description:
+*   Zentrales Stylesheet für das Radsim-Frontend.
+*   Definiert das komplette Erscheinungsbild der Webanwendung
+*   inklusive Layout, Navigation, Geräte-Darstellung und Modals.
+*
+*   Hauptbereiche:
+*   - Basis-Layout (Body, Typography, Farben)
+*   - Navigation (Navbar, Dropdowns, User-Menü)
+*   - UI-Komponenten (Buttons, Modals, Tabs)
+*   - Geräte-Grid (Messgeräte & Quellen)
+*   - Detailansichten (Geräte- & Übungs-Modal)
+*   - Live-Messung (Charts, Stat-Karten)
+*   - Offset-Steuerung (Slider & Controls)
+*
+* Notes:
+*   - Mobile-first nur teilweise umgesetzt (Desktop-Fokus)
+*   - Farbgebung basiert auf Status (z.B. Dosis, Aktivität)
+*   - Viele Komponenten sind dynamisch via JS gesteuert
+*   - CSS ist modular nach Bereichen strukturiert
+*
+* Dependencies:
+*   - HTML Templates (Jinja2)
+*   - JavaScript (Socket.IO, Chart.js o.ä.)
+*
+* Naming Conventions:
+*   - BEM-ähnliche Struktur (z.B. .device-card, .ud-modal-*)
+*   - Statusklassen: .aktiv, .inaktiv, .fehler
+*   - Farbklassen: .dose-green, .dose-red, etc.
+*
+* Design Principles:
+*   - Klare visuelle Trennung von Komponenten
+*   - Farbfeedback für Status & Gefahren (z.B. Rot = kritisch)
+*   - Hover-States für bessere UX
+*   - Konsistente Abstände und Rundungen
+*
+* Known Limitations:
+*   - Keine vollständige Dark/Light Theme Trennung
+*   - Teilweise feste Pixelgrößen (z.B. Charts)
+*   - Responsive Verhalten ausbaufähig
+*
+* Revision History:
+*   2026-03-18  DH   Initiale Version
+*
+*****************************************************************************/
 /* =========================================================
    BASE
 ========================================================= */
@@ -1509,7 +1561,6 @@ main {
 
 .offset-slider {
     flex: 1;
-    -webkit-appearance: none;
     height: 5px;
     border-radius: 3px;
     background: #e0e0e0;

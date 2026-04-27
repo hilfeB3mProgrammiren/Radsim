@@ -1,3 +1,43 @@
+"""
+*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        app.py
+* PROJECT:     Radsim
+* MODULE:      Backend Server (Flask + SocketIO + MQTT)
+*
+* Description:
+*   Zentrale Backend-Anwendung für das Radsim-System.
+*   Stellt REST-API, WebSocket-Kommunikation (Socket.IO)
+*   sowie MQTT-Anbindung für Geräte und Strahlungsquellen bereit.
+*
+*   Hauptfunktionen:
+*   - Verwaltung von Geräten (Messgeräte & Quellen)
+*   - Echtzeit-Übertragung von Messdaten via Socket.IO
+*   - Speicherung und Abfrage von Messdaten (SQLite)
+*   - Steuerung von Geräten über MQTT
+*   - Verwaltung von Übungen (Start, Stop, Zuordnung)
+*
+* Notes:
+*   - Verwendet eventlet für asynchrone Verarbeitung
+*   - SQLite mit WAL-Modus für parallelen Zugriff
+*   - MQTT-Broker läuft lokal auf Port 1883
+*   - Fallback-Watcher überwacht DB auf neue Messdaten
+*
+* Dependencies:
+*   - Python 3.x
+*   - Flask
+*   - Flask-SocketIO
+*   - Flask-Login
+*   - eventlet
+*   - paho-mqtt
+*
+* Revision History:
+*   2026-03-18  DH   Initiale Version
+*
+*****************************************************************************
+"""
 import eventlet
 eventlet.monkey_patch()
 

@@ -1,3 +1,48 @@
+"""
+*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        auth.py
+* PROJECT:     Radsim
+* MODULE:      Authentication
+*
+* Description:
+*   Dieses Modul implementiert die Benutzer-Authentifizierung
+*   für das Radsim-System mittels Flask-Login.
+*
+*   Hauptfunktionen:
+*   - Anzeige der Login-Seite mit vorhandenen Benutzern
+*   - Verarbeitung von Login-Anfragen (Username/Passwort)
+*   - Session-Handling über Flask-Login
+*   - Logout und Weiterleitung zur Startseite
+*
+* Notes:
+*   - Login erfolgt aktuell über Formular (POST /login)
+*   - Passwortprüfung erfolgt über user.check_password()
+*   - Keine Registrierung in diesem Modul enthalten
+*   - Für interne Nutzung (kein öffentliches Auth-System)
+*
+* Dependencies:
+*   - Flask
+*   - Flask-Login
+*   - users (User-Model + Passwortprüfung)
+*   - database (DB-Zugriff)
+*
+* Configuration:
+*   - Flask-Login muss im Hauptprogramm initialisiert sein
+*   - login_manager.user_loader muss definiert sein
+*
+* Security:
+*   - Passwörter müssen gehashed gespeichert sein
+*   - Kein CSRF-Schutz implementiert (nur internes System)
+*   - Für Produktion: HTTPS und Secure Cookies aktivieren
+*
+* Revision History:
+*   2026-03-18  DH   Initiale Version
+*
+***********"""
+
 from flask import Blueprint, render_template, request, redirect, url_for
 from flask_login import login_user, logout_user
 from users import get_user_by_username
