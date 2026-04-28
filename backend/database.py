@@ -1,3 +1,41 @@
+"""
+*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        database.py
+* PROJECT:     Radsim
+* MODULE:      Datenbankverbindung
+*
+* Description:
+*   Dieses Modul verwaltet die SQLite-Datenbankverbindung für
+*   das Radsim-System. Es stellt Funktionen zur Verfügung, um
+*   die Verbindung im Flask-Request-Kontext zu öffnen, zu
+*   schließen und die Datenbank anhand des Schema-Files zu
+*   initialisieren.
+*
+*   Hauptfunktionen:
+*   - get_db()   : Gibt die Datenbankverbindung für den
+*                  aktuellen Request zurück (lazy init)
+*   - close_db() : Schließt die Verbindung am Ende des Requests
+*   - init_db()  : Initialisiert die Datenbank anhand schema.sql
+*
+* Notes:
+*   - Verbindung wird pro Request nur einmal geöffnet
+*   - WAL-Modus aktiviert für parallele Lesezugriffe
+*   - busy_timeout auf 5s gesetzt um Fehler bei gleichzeitigen
+*     Schreibzugriffen zu vermeiden
+*
+* Dependencies:
+*   - Flask (Application Context / g-Objekt)
+*   - SQLite3
+*   - schema.sql (Datenbankschema)
+*
+* Revision History:
+*   2026-03-18  TV   Initiale Version
+*
+*****************************************************************************
+"""
 import sqlite3
 import os
 from flask import g

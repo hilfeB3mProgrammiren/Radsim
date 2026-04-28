@@ -1,4 +1,39 @@
-# create_users.py
+"""
+*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        create_users.py
+* PROJECT:     Radsim
+* MODULE:      Benutzerverwaltung (Initialisierung)
+*
+* Description:
+*   Dieses Skript legt initiale Benutzer in der radsim.db
+*   Datenbank an. Es wird einmalig zur Einrichtung des Systems
+*   ausgeführt und erstellt die vordefinierten Benutzerkonten
+*   mit gehashten Passwörtern.
+*
+*   Angelegte Benutzer:
+*   - admin        : Administratorzugang
+*   - uebungsleiter: Zugang für den Übungsleiter
+*
+* Notes:
+*   - Dieses Skript ist nur einmalig bei der Ersteinrichtung
+*     auszuführen
+*   - Passwörter werden mit werkzeug generate_password_hash
+*     gehasht gespeichert
+*   - Wird das Skript erneut ausgeführt, schlägt das INSERT
+*     fehl, da der Benutzername als UNIQUE definiert ist
+*
+* Dependencies:
+*   - SQLite3 / radsim.db
+*   - werkzeug.security
+*
+* Revision History:
+*   2026-03-18  DH   Initiale Version
+*
+*****************************************************************************
+"""
 import sqlite3
 import os
 from werkzeug.security import generate_password_hash

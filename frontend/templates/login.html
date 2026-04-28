@@ -1,3 +1,46 @@
+<!--
+==============================================================================
+Copyright (c) 2026, All rights reserved
+Internal Use Only
+
+FILE:        login.html
+PROJECT:     Radsim
+MODULE:      Frontend Template (Login / Authentifizierung)
+
+Description:
+    Login-Seite der Radsim-Webanwendung.
+    Stellt ein einfaches Login-Formular bereit, über das sich
+    Benutzer mit Benutzername und Passwort authentifizieren können.
+
+    Dieses Template nutzt Jinja2 zur serverseitigen Darstellung
+    und wird durch Flask gerendert.
+
+    Enthaltene Hauptbereiche:
+    - Login-Formular (Benutzerauswahl & Passwort-Eingabe)
+    - Fehleranzeige bei fehlgeschlagenem Login
+
+Features:
+    - Dynamische Benutzerliste via Jinja2
+    - Fehleranzeige bei ungültigen Anmeldedaten
+
+Notes:
+    - Weiterleitung nach erfolgreichem Login über Flask-Login
+    - Keine JavaScript-Abhängigkeiten
+
+Dependencies:
+    - Flask (Backend Rendering & Auth)
+    - Jinja2 (Template Engine)
+    - Flask-Login (Session Management)
+
+Known Limitations:
+    - Keine clientseitige Validierung der Eingaben
+    - Responsiveness nur begrenzt optimiert
+
+Revision History:
+    2026-03-18
+      DH   Initiale Version
+==============================================================================
+-->
 <!DOCTYPE html>
 <html lang="de">
 <head>
@@ -10,11 +53,11 @@
         <h2>Strahlungsübung Login</h2>
 
         <select name="username" required>
-    <option value="">-- Benutzer wählen --</option>
-    {% for u in users %}
-        <option value="{{ u.username }}">{{ u.username }}</option>
-    {% endfor %}
-</select>
+            <option value="">-- Benutzer wählen --</option>
+            {% for u in users %}
+                <option value="{{ u.username }}">{{ u.username }}</option>
+            {% endfor %}
+        </select>
 
         <input type="password" name="password" placeholder="Passwort" required>
 

@@ -1,3 +1,39 @@
+-- *****************************************************************************
+-- * Copyright (c) 2026, All rights reserved
+-- * Internal Use Only
+-- *
+-- * FILE:        schema.sql
+-- * PROJECT:     Radsim
+-- * MODULE:      Datenbankschema
+-- *
+-- * Description:
+-- *   Dieses File definiert das vollständige Datenbankschema
+-- *   der radsim.db SQLite-Datenbank. Es wird beim ersten Start
+-- *   des Systems durch init_db() in database.py ausgeführt.
+-- *
+-- *   Enthaltene Tabellen:
+-- *   - uebungen    : Verwaltung der Übungsszenarien
+-- *   - geraete     : Alle Geräte (Messgeräte & Strahlenquellen)
+-- *   - messungen   : Messdaten der Messgeräte im Zeitverlauf
+-- *   - konfiguration: Ausstehende Konfigurationsbefehle
+-- *   - users       : Benutzerkonten für die Weboberfläche
+-- *
+-- * Notes:
+-- *   - Alle Tabellen werden nur angelegt falls nicht vorhanden
+-- *     (CREATE TABLE IF NOT EXISTS)
+-- *   - cps und dosis in der Tabelle messungen sind Legacy-Felder
+-- *     und werden als Gamma-Alias behandelt
+-- *   - mqtt_offset und mqtt_reset in geraete sind veraltete Felder,
+-- *     offset_alpha/beta/gamma sind die aktuell genutzten Felder
+-- *
+-- * Dependencies:
+-- *   - database.py (init_db)
+-- *
+-- * Revision History:
+-- *   2026-03-18  TV   Initiale Version
+-- *
+-- *****************************************************************************
+
 CREATE TABLE IF NOT EXISTS uebungen (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     name        TEXT NOT NULL,

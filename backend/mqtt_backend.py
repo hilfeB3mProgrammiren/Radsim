@@ -1,47 +1,53 @@
 """
-mqtt_backend.py
-──────────────────────────────────────────────────────────────────────────────
-MQTT-Bridge für Radsim – verbindet Strahlungsquellen (ESP32 Quelle) und
-Messgeräte/Zähler (ESP32 Zähler) mit der radsim.db Datenbank.
-
-┌─────────────────────────────────────────────────────────────────────────┐
-│  QUELLE  (typ = 'quelle')                                               │
-│  Server → Quelle   sources/cmd/<mac>                                    │
-│    {                                                                    │
-│      "alpha":  1.20,    ← Strahlungsintensität Alpha  (float, mSv/h)   │
-│      "beta":   0.00,    ← Strahlungsintensität Beta   (float, mSv/h)   │
-│      "gamma":  3.50,    ← Strahlungsintensität Gamma  (float, mSv/h)   │
-│      "status": "aktiv"  ← Statusvariable                               │
-│    }                                                                    │
-│  Quelle → Server   (kein Empfang / keine Subscription)                  │
-├─────────────────────────────────────────────────────────────────────────┤
-│  ZÄHLER  (typ = 'messgeraet')                                           │
-│  Server → Zähler   devices/cmd/<mac>                                    │
-│    {                                                                    │
-│      "offset_alpha": 0.0,  ← Offset Alpha (float, mSv/h)              │
-│      "offset_beta":  0.0,  ← Offset Beta  (float, mSv/h)              │
-│      "offset_gamma": 0.0,  ← Offset Gamma (float, mSv/h)              │
-│      "reset":  false,      ← Gesamtdosis-Reset (bool)                 │
-│      "status": "aktiv"     ← Statusvariable                            │
-│    }                                                                    │
-│  Zähler → Server   devices/data                                         │
-│    {                                                                    │
-│      "mac":        "AA:BB:CC:DD:EE:FF",                                │
-│      "cps_alpha":  1.2,   ← Aktuelle Alpha-Dosisrate  (mSv/h)         │
-│      "cps_beta":   0.5,   ← Aktuelle Beta-Dosisrate   (mSv/h)         │
-│      "cps_gamma":  3.1,   ← Aktuelle Gamma-Dosisrate  (mSv/h)         │
-│      "dosis_alpha": 0.04, ← Kum. Alpha-Dosis          (mSv)           │
-│      "dosis_beta":  0.01, ← Kum. Beta-Dosis           (mSv)           │
-│      "dosis":       0.12  ← Kum. Gamma-Dosis          (mSv)           │
-│    }                                                                    │
-│  Rückwärtskompatibel: "cps"/"dosis" allein → wird als Gamma gewertet   │
-└─────────────────────────────────────────────────────────────────────────┘
-
-Voraussetzungen:
-    pip install paho-mqtt
-
-Starten:
-    python mqtt_backend.py
+*****************************************************************************
+* Copyright (c) 2026, All rights reserved
+* Internal Use Only
+*
+* FILE:        mqtt_backend.py
+* PROJECT:     Radsim
+* MODULE:      MQTT-Bridge (Geräte ↔ Datenbank)
+*
+* Description:
+*   Dieses Modul implementiert die MQTT-Bridge zwischen den
+*   ESP32-Geräten (Strahlenquellen und Messgeräte) und der
+*   radsim.db Datenbank. Es empfängt Messdaten von den
+*   Messgeräten, speichert diese in der Datenbank und leitet
+*   sie per HTTP an den Flask-Server weiter. Zusätzlich sendet
+*   es Steuerbefehle an Quellen und Messgeräte.
+*
+*   Hauptfunktionen:
+*   - Empfang und Speicherung von Messdaten der Messgeräte
+*   - Senden von Strahlungsparametern an Strahlenquellen
+*   - Senden von Offset- und Resetbefehlen an Messgeräte
+*   - Synchronisation aller bekannten Geräte beim Serverstart
+*
+* Notes:
+*   - Nur Messgeräte senden Daten an den Server
+*   - Strahlenquellen empfangen ausschließlich Befehle
+*   - Bei fehlendem Flask-Server übernimmt der Watcher
+*     in app.py die Weiterleitung der Messdaten
+*   - Rückwärtskompatibel: "cps"/"dosis" wird als Gamma gewertet
+*
+* MQTT Topics:
+*   - Zähler  → Server : devices/data
+*   - Server  → Zähler : devices/cmd/<MAC>
+*   - Server  → Quelle : sources/cmd/<MAC>
+*
+* Dependencies:
+*   - paho-mqtt
+*   - Flask (HTTP-Push an /internal/measurement)
+*   - SQLite3 / radsim.db
+*
+* Configuration:
+*   - MQTT_BROKER          : IP/Hostname des Brokers (Standard: localhost)
+*   - MQTT_PORT            : Port des Brokers (Standard: 1883)
+*   - MQTT_TOPIC_ZAEHLER_IN: Topic für eingehende Messdaten
+*   - DB_FILE              : Pfad zur SQLite-Datenbank
+*
+* Revision History:
+*   2026-03-18  RW   Initiale Version
+*
+*****************************************************************************
 """
 
 import json
@@ -52,12 +58,12 @@ import paho.mqtt.client as mqtt
 from datetime import datetime
 
 # ── Konfiguration ──────────────────────────────────────────────────────────
-MQTT_BROKER          = "localhost"       # IP/Hostname des MQTT-Brokers
-MQTT_PORT            = 1883
+MQTT_BROKER           = "localhost"      # IP/Hostname des MQTT-Brokers
+MQTT_PORT             = 1883
 MQTT_TOPIC_ZAEHLER_IN = "devices/data"  # Zähler → Server (Messdaten)
 # Server → Zähler:   devices/cmd/<mac>
 # Server → Quelle:   sources/cmd/<mac>
-DB_FILE              = "radsim.db"
+DB_FILE               = "radsim.db"
 # ──────────────────────────────────────────────────────────────────────────
 
 
